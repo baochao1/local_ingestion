@@ -12,6 +12,10 @@ from local_ingestion.platform.sinks.local_file import (
     LocalFileSinkConfig,
     FileFormat,
 )
+from local_ingestion.platform.sinks.postgres import (
+    PostgresSink,
+    PostgresSinkConfig,
+)
 
 __all__ = [
     "FileSinkConfig",
@@ -22,4 +26,6 @@ __all__ = [
     "ParquetFileSink",
     "LocalFileSinkConfig",
     "FileFormat",
+    "PostgresSink",
+    "PostgresSinkConfig",
 ]
