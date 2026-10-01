@@ -34,11 +34,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from local_ingestion.core.connectors.base import SinkConnector
 from local_ingestion.platform.config import get_database_url
 from local_ingestion.platform.dialect import UnknownDialectError, get_dialect
+from local_ingestion.platform.identity import (
+    detect_orphans,
+    resolve_columns,
+    resolve_tables,
+)
 from local_ingestion.platform.storage.models_core import (
     CatalogColumn,
     CatalogDatabase,
     CatalogSchema,
     CatalogTable,
+    EntityAlias,
 )
 from local_ingestion.schema.base import DataType
 from local_ingestion.schema.data.database import Database as SourceDatabase
@@ -242,6 +248,7 @@ class PostgresSink(SinkConnector):
         if not (self._databases or self._schemas or self._tables or self._columns):
             return
         try:
+            self._resolve_identities()
             db_ids = self._upsert(CatalogDatabase, list(self._databases.values()),
                                   _DATABASE_UPDATE, key_fqn=True)
             for schema in self._schemas.values():
@@ -270,6 +277,96 @@ class PostgresSink(SinkConnector):
             raise
         finally:
             self._reset_buffers()
+
+    def _resolve_identities(self) -> None:
+        """FR-13 identity resolution, run inside the flush transaction.
+
+        For tables/columns whose FQN changed but structure is preserved, rewrite
+        the *existing* row's FQN to the new one (keeping its stable ``id``) and
+        record the former name in ``entity_alias``. The subsequent
+        ``ON CONFLICT (fqn)`` upsert then hits the same row, so a rename is never
+        reported as delete + add (which would break lineage and lose tags/history).
+        """
+        if self._session is None or not self._tables:
+            return
+        ds = self._config.datasource_id
+        existing_tables = (
+            self._session.query(CatalogTable)
+            .filter_by(datasource_id=ds, deleted_at=None)
+            .all()
+        )
+        if not existing_tables:
+            return
+
+        current_table_dicts = [
+            {
+                "fqn": t["fqn"],
+                "name": t["name"],
+                "struct_hash": t["struct_hash"],
+                "col_names": [c["name"] for c in (t.get("columns_json") or [])],
+            }
+            for t in self._tables.values()
+        ]
+        resolutions = resolve_tables(ds, current_table_dicts, existing_tables)
+
+        aliases: List[EntityAlias] = []
+        table_map: Dict[str, tuple] = {}  # new_fqn -> (old_id, old_fqn)
+        for r in resolutions:
+            if r.action == "renamed":
+                self._session.query(CatalogTable).filter_by(id=r.entity_id).update(
+                    {CatalogTable.fqn: r.fqn}, synchronize_session=False
+                )
+                aliases.append(EntityAlias(
+                    entity_type="table", entity_id=r.entity_id, alias_fqn=r.alias_fqn,
+                ))
+            table_map[r.fqn] = (r.entity_id, r.old_fqn)
+
+        orphans = detect_orphans(existing_tables, set(self._tables.keys()))
+        if orphans:
+            logger.info(
+                "orphan_tables_detected",
+                count=len(orphans), fqns=[o.fqn for o in orphans][:50],
+            )
+
+        table_ids = [t.id for t in existing_tables]
+        existing_columns = (
+            self._session.query(CatalogColumn)
+            .filter(CatalogColumn.table_id.in_(table_ids),
+                    CatalogColumn.deleted_at.is_(None))
+            .all()
+            if table_ids else []
+        )
+        existing_cols_by_table: Dict[int, list] = {}
+        for c in existing_columns:
+            existing_cols_by_table.setdefault(c.table_id, []).append(c)
+
+        cur_cols_by_table: Dict[str, list] = {}
+        for col_fqn, row in self._columns.items():
+            cur_cols_by_table.setdefault(
+                self._column_table_fqn[col_fqn], []
+            ).append(row)
+
+        for tfqn, cur_cols in cur_cols_by_table.items():
+            old_id, old_fqn = table_map.get(tfqn, (None, None))
+            if old_id is None or old_fqn is None:
+                continue  # new table -> columns are new
+            for cr in resolve_columns(
+                ds, cur_cols, existing_cols_by_table.get(old_id, []),
+                old_fqn, tfqn,
+            ):
+                if cr.entity_id is None:
+                    continue
+                self._session.query(CatalogColumn).filter_by(id=cr.entity_id).update(
+                    {CatalogColumn.fqn: cr.fqn}, synchronize_session=False
+                )
+                if cr.alias_fqn and cr.alias_fqn != cr.fqn:
+                    aliases.append(EntityAlias(
+                        entity_type="column", entity_id=cr.entity_id,
+                        alias_fqn=cr.alias_fqn,
+                    ))
+
+        for a in aliases:
+            self._session.add(a)
 
     def close(self) -> None:
         try:
