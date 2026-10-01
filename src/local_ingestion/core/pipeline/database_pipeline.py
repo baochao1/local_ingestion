@@ -9,7 +9,10 @@ import structlog
 from local_ingestion.core.connectors.base import SourceConnector, SinkConnector
 from local_ingestion.core.pipeline.base import Pipeline, PipelineContext, PipelineStatus
 from local_ingestion.core.pipeline.table_pipeline import TablePipeline, TablePipelineConfig
+from local_ingestion.platform.dialect import UnknownDialectError, get_dialect
+from local_ingestion.schema.base import DataType
 from local_ingestion.schema.data.database import Database, DatabaseSchema
+from local_ingestion.schema.data.table import Table
 
 logger = structlog.get_logger()
 
@@ -29,6 +32,8 @@ class DatabasePipelineConfig:
     parallel_schemas: bool = False
     max_workers: int = 4
     retry_attempts: int = 3
+    # ds_type drives the T-114 dialect used by the default transform hook.
+    ds_type: str = "postgres"
 
     def should_process_database(self, database: str) -> bool:
         """Check if database should be processed based on filters
@@ -68,11 +73,46 @@ class DatabasePipeline(Pipeline):
         config: Optional[DatabasePipelineConfig] = None,
         name: Optional[str] = None,
         database: Optional[str] = None,
+        transformer: Optional[Any] = None,
     ):
         super().__init__(source=source, sink=sink, name=name)
         self.config = config or DatabasePipelineConfig()
         self.target_database = database
+        self._dialect = self._resolve_dialect()
+        # Hook applied to every table before it reaches the sink (MOD-02 §7.1-2).
+        # Defaults to the dialect-based type normaliser; inject a callable for
+        # other processing logic so it is never silently bypassed.
+        self.transformer = transformer or self._default_transform
         self._table_pipeline: Optional[TablePipeline] = None
+
+    def _resolve_dialect(self):
+        try:
+            return get_dialect(self.config.ds_type)
+        except UnknownDialectError:
+            logger.warning(
+                "dialect_unknown_for_transform",
+                ds_type=self.config.ds_type,
+            )
+            return None
+
+    def _default_transform(self, table: Table) -> Table:
+        """Default transform: recover UNKNOWN column types via the T-114 dialect.
+
+        Mirrors the normalisation PostgresSink performs, applied centrally so the
+        pipeline owns type canonicalisation rather than relying on the sink.
+        """
+        if self._dialect is None or not table.columns:
+            return table
+        for col in table.columns:
+            dt = col.dataType
+            if (
+                dt == DataType.UNKNOWN or str(dt).upper() == "UNKNOWN"
+            ) and col.dataTypeDisplay:
+                try:
+                    col.dataType = self._dialect.normalize_type(col.dataTypeDisplay)
+                except Exception:  # noqa: BLE001
+                    pass
+        return table
 
     def validate(self) -> bool:
         """Validate pipeline configuration and connectivity
@@ -258,6 +298,7 @@ class DatabasePipeline(Pipeline):
                     for table in tables:
                         try:
                             table.columns = self.source.fetch_columns(table)
+                            table = self.transformer(table)
                             self.sink.write_table(table)
                             context.increment_tables_processed()
                         except Exception as e:
@@ -388,6 +429,7 @@ class DatabasePipeline(Pipeline):
         """
         for table in changes.get("added_tables", []):
             try:
+                table = self.transformer(table)
                 self.sink.write_table(table)
                 context.increment_tables_processed()
             except Exception as e:
@@ -402,6 +444,7 @@ class DatabasePipeline(Pipeline):
 
         for table in changes.get("modified_tables", []):
             try:
+                table = self.transformer(table)
                 self.sink.write_table(table)
                 context.increment_tables_processed()
             except Exception as e:

@@ -71,6 +71,7 @@ T-113 造数脚本
 | T-108 凭据加密（`platform/credentials.py`）+ 连接供给（`platform/connections.py`） | ✅ 含 122 个平台层用例；只读探针已在真实 PG 上双向验证（owner 角色判为可写、只读角色判为只读） |
 | T-114 Dialect 抽象（旁路 `platform/dialect/`） | ✅ 新增 `base.py` + `postgres/mysql/snowflake.py` + `registry.py`；**逐字复刻** L1 三个连接器的系统表 SQL 与类型映射，`normalize_type` 与 L1 `_map_*_type` 在 46 条用例上结果完全一致；registry 支持 `postgres/postgresql/mysql/mariadb/snowflake` 别名，未知方言抛 `UnknownDialectError`。**L1 连接器零改动**（决策 D1）。测试 `tests/unit/platform/test_dialect.py` 46 passed，平台层 168 passed |
 | T-105 PostgresSink（依赖 T-114） | ✅ 新增 `platform/sinks/postgres.py`：`PostgresSink(SinkConnector)` + `PostgresSinkConfig`。缓冲后按 DB→schema→table→column 依赖顺序单事务批量 upsert，用 `pg_insert ... ON CONFLICT (fqn) WHERE deleted_at IS NULL DO UPDATE`（已验证 `index_where` 正确匹配部分唯一索引）；只更新本模块负责列，**显式排除 `grade_level`/`grade_code`**（MOD-05 所有）；schema 由表 FQN 派生（pipeline 不调 write_schema）；列 `data_type` 经 T-114 方言对 UNKNOWN 兜底归一。纯单元 4 passed；DB 支撑 2 用例在 `DATABASE_URL` 可达时跑（无 Docker 时 skip）。平台层 + 核心 sink/pipeline 回归 278 passed |
+| T-115 DatabasePipeline transform 钩子 | ✅ 修复 MOD-02 §7.1-2 缺陷：`DatabasePipeline` 原在 `_extract_tables_with_context` 与 `_process_changes`（added/modified）三处直接 `sink.write_table`，绕过了 transform 钩子。现新增 `transformer` 注入 + `_default_transform`（用 T-114 方言对 `UNKNOWN` 列类型兜底归一），所有写表路径均先经 `transformer(table)` 再落库；`TablePipeline` 既有 `transform` 钩子保持。`DatabasePipelineConfig` 加 `ds_type`（默认 `postgres`）驱动方言。测试 `tests/unit/core/test_pipeline.py` 新增 3 用例（钩子每表触发 / 默认归一化 / process_changes 路由），平台层+核心回归 334 passed |
 
 **顺带修掉的两个预存在缺陷**（被"缺依赖导致全量测试从未跑通"掩盖）：
 

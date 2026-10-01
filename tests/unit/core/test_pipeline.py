@@ -582,3 +582,100 @@ class TestPipelineChainer:
         contexts = chainer.run_all()
         assert len(contexts) == 1
         assert contexts[0].status == PipelineStatus.COMPLETED
+
+
+class TestDatabasePipelineTransform:
+    """T-115: DatabasePipeline must route every table through the transform hook
+    (MOD-02 §7.1-2: previously write_table was called directly, bypassing it)."""
+
+    def _make_pipeline(self, transformer=None, ds_type="postgres"):
+        source = MockSourceConnector()
+        source._databases = [Database(name="db", fullyQualifiedName="db")]
+        source._schemas = [
+            DatabaseSchema(name="public", fullyQualifiedName="db.public", database="db")
+        ]
+        source._tables = [
+            Table(
+                name="t",
+                fullyQualifiedName="db.public.t",
+                database="db",
+                databaseSchema="public",
+            )
+        ]
+        sink = MockSinkConnector()
+        source.connect(None)
+        sink.connect(None)
+        config = DatabasePipelineConfig(ds_type=ds_type)
+        return DatabasePipeline(
+            source=source, sink=sink, config=config, transformer=transformer
+        )
+
+    def test_transform_hook_invoked_per_table(self):
+        calls = []
+
+        def spy(table):
+            calls.append(table)
+            return table
+
+        pipeline = self._make_pipeline(transformer=spy)
+        pipeline.validate()
+        context = pipeline.run()
+
+        assert context.status == PipelineStatus.COMPLETED
+        assert len(calls) == 1
+        assert len(pipeline.sink._written_tables) == 1
+        # The table handed to the sink is exactly the one returned by the hook.
+        assert calls[0] is pipeline.sink._written_tables[0]
+
+    def test_default_transform_normalizes_unknown_type(self):
+        source = MockSourceConnector()
+        source._databases = [Database(name="db", fullyQualifiedName="db")]
+        source._schemas = [
+            DatabaseSchema(name="public", fullyQualifiedName="db.public", database="db")
+        ]
+        source._tables = [
+            Table(
+                name="t",
+                fullyQualifiedName="db.public.t",
+                database="db",
+                databaseSchema="public",
+                columns=[
+                    Column(name="c", dataType=DataType.UNKNOWN, dataTypeDisplay="int4"),
+                ],
+            )
+        ]
+        sink = MockSinkConnector()
+        source.connect(None)
+        sink.connect(None)
+        pipeline = DatabasePipeline(
+            source=source, sink=sink, config=DatabasePipelineConfig(ds_type="postgres")
+        )
+        pipeline.validate()
+        pipeline.run()
+
+        written = sink._written_tables
+        assert len(written) == 1
+        # Default hook recovered the UNKNOWN type via the T-114 Postgres dialect.
+        assert written[0].columns[0].dataType == DataType.INTEGER
+
+    def test_process_changes_routes_through_transform(self):
+        calls = []
+
+        def spy(table):
+            calls.append(table)
+            return table
+
+        pipeline = self._make_pipeline(transformer=spy)
+        added = Table(
+            name="a", fullyQualifiedName="db.public.a", database="db", databaseSchema="public"
+        )
+        modified = Table(
+            name="b", fullyQualifiedName="db.public.b", database="db", databaseSchema="public"
+        )
+        changes = {"added_tables": [added], "modified_tables": [modified]}
+        context = PipelineContext()
+        pipeline._process_changes(context, changes)
+
+        assert len(calls) == 2
+        assert added in calls and modified in calls
+        assert len(pipeline.sink._written_tables) == 2
