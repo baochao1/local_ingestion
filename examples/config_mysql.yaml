@@ -1,0 +1,38 @@
+# MySQL 数据源配置
+database:
+  type: mysql
+  host: 186.64.10.29
+  port: 3306
+  username: root
+  password: csap_starfox_h3c
+  database: mysql
+
+# 扫描配置
+scan:
+  include_schemas:
+    - information_schema
+    - mysql
+  exclude_tables:
+    - temp_*
+  include_tables: []
+
+# 元数据摄取配置
+metadata:
+  serviceName: local-mysql
+  databaseName: mysql
+  description: "MySQL metadata ingestion from 186.64.10.29"
+  owner: admin
+
+# 质量检查配置
+quality:
+  enabled: true
+  rules:
+    - type: not_null
+      columns: [id, created_at]
+    - type: unique
+      columns: [id]
+
+# 输出配置
+output:
+  format: api
+  api_url: http://localhost:8080

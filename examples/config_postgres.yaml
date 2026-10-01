@@ -1,0 +1,39 @@
+# PostgreSQL 数据源配置
+database:
+  type: postgresql
+  host: localhost
+  port: 5432
+  username: postgres
+  password: your_password
+  database: your_database
+  schema: public
+
+# 扫描配置
+scan:
+  include_schemas:
+    - public
+    - information_schema
+  exclude_tables:
+    - pg_*
+  include_tables: []
+
+# 元数据摄取配置
+metadata:
+  serviceName: local-postgres
+  databaseName: mydb
+  description: "PostgreSQL metadata ingestion"
+  owner: admin
+
+# 质量检查配置
+quality:
+  enabled: true
+  rules:
+    - type: not_null
+      columns: [id]
+    - type: unique
+      columns: [id]
+
+# 输出配置
+output:
+  format: api
+  api_url: http://localhost:8080

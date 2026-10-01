@@ -1,0 +1,71 @@
+[project]
+name = "local-ingestion"
+version = "0.1.0"
+description = "Local Ingestion Module for OpenMetadata"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "sqlalchemy>=2.0",
+    "pymysql>=1.0",
+    "psycopg2-binary>=2.9",
+    "snowflake-sqlalchemy>=1.0",
+    "orjson>=3.0",
+    "structlog>=23.0",
+    "prometheus-client>=0.19",
+    "jinja2>=3.1",
+    "aiosmtplib>=3.0",
+    "fastapi>=0.104",
+    "uvicorn>=0.24",
+    "pyyaml>=6.0",
+    "python-multipart>=0.0.6",
+    "apscheduler>=3.10",
+    "aiohttp>=3.9",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+]
+dev = [
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.7",
+]
+
+[project.scripts]
+local-ingest = "local_ingestion.cli.main:main"
+local-serve = "local_ingestion.cli.main:serve"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"

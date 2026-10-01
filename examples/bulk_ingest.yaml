@@ -1,0 +1,81 @@
+# 批量表元数据配置
+tables:
+  - name: users
+    fullyQualifiedName: mydb.public.users
+    database: mydb
+    databaseSchema: public
+    description: "User accounts table"
+    columns:
+      - name: id
+        dataType: INTEGER
+        description: Primary key
+        ordinalPosition: 1
+      - name: username
+        dataType: VARCHAR
+        dataLength: 100
+        description: Username
+        ordinalPosition: 2
+      - name: email
+        dataType: VARCHAR
+        dataLength: 255
+        description: Email address
+        ordinalPosition: 3
+      - name: created_at
+        dataType: TIMESTAMP
+        description: Creation timestamp
+        ordinalPosition: 4
+
+  - name: orders
+    fullyQualifiedName: mydb.public.orders
+    database: mydb
+    databaseSchema: public
+    description: "Orders table"
+    columns:
+      - name: id
+        dataType: INTEGER
+        description: Order ID
+        ordinalPosition: 1
+      - name: user_id
+        dataType: INTEGER
+        description: Foreign key to users
+        ordinalPosition: 2
+      - name: total_amount
+        dataType: DECIMAL
+        dataLength: "10,2"
+        description: Order total
+        ordinalPosition: 3
+      - name: status
+        dataType: VARCHAR
+        dataLength: 50
+        description: Order status
+        ordinalPosition: 4
+      - name: created_at
+        dataType: TIMESTAMP
+        description: Order creation time
+        ordinalPosition: 5
+
+  - name: products
+    fullyQualifiedName: mydb.public.products
+    database: mydb
+    databaseSchema: public
+    description: "Products catalog"
+    columns:
+      - name: id
+        dataType: INTEGER
+        description: Product ID
+        ordinalPosition: 1
+      - name: name
+        dataType: VARCHAR
+        dataLength: 200
+        description: Product name
+        ordinalPosition: 2
+      - name: price
+        dataType: DECIMAL
+        dataLength: "10,2"
+        description: Product price
+        ordinalPosition: 3
+      - name: category
+        dataType: VARCHAR
+        dataLength: 100
+        description: Product category
+        ordinalPosition: 4

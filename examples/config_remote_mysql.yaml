@@ -1,0 +1,38 @@
+# MySQL 数据源配置 - 连接远程数据库
+database:
+  type: mysql
+  host: 186.64.10.29
+  port: 3306
+  username: root
+  password: rootpassword
+  database: mysql
+
+# 扫描配置
+scan:
+  include_schemas:
+    - mysql
+    - information_schema
+    - performance_schema
+    - sys
+  exclude_tables:
+    - temp_*
+  # 如需指定表，填写下面
+  # include_tables:
+  #   - users
+  #   - orders
+
+# 元数据摄取配置
+metadata:
+  serviceName: remote-mysql-186
+  databaseName: remote_db
+  description: "Remote MySQL database at 186.64.10.29"
+  owner: admin
+
+# 质量检查配置
+quality:
+  enabled: false
+
+# 输出配置
+output:
+  format: json
+  output_file: metadata_output.json
