@@ -69,6 +69,7 @@ T-113 造数脚本
 | T-101 工程基建：安装 `aiohttp`/`pytest-asyncio` 等测试依赖，解除 3 个收集错误 | ✅ |
 | 回归基线 | ✅ `pytest tests/unit -q` → **754 passed**（此前因缺依赖从未真正跑通过） |
 | T-108 凭据加密（`platform/credentials.py`）+ 连接供给（`platform/connections.py`） | ✅ 含 122 个平台层用例；只读探针已在真实 PG 上双向验证（owner 角色判为可写、只读角色判为只读） |
+| T-114 Dialect 抽象（旁路 `platform/dialect/`） | ✅ 新增 `base.py` + `postgres/mysql/snowflake.py` + `registry.py`；**逐字复刻** L1 三个连接器的系统表 SQL 与类型映射，`normalize_type` 与 L1 `_map_*_type` 在 46 条用例上结果完全一致；registry 支持 `postgres/postgresql/mysql/mariadb/snowflake` 别名，未知方言抛 `UnknownDialectError`。**L1 连接器零改动**（决策 D1）。测试 `tests/unit/platform/test_dialect.py` 46 passed，平台层 168 passed |
 
 **顺带修掉的两个预存在缺陷**（被"缺依赖导致全量测试从未跑通"掩盖）：
 
