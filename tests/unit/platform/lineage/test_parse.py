@@ -31,3 +31,12 @@ def test_unqualified_definition_falls_back_to_view_schema():
     assert ("ds1.mydb.public.t1", "ds1.mydb.public.v") in edges
     col_edges = extract_column_edges("ds1", "mydb", "public", "v", defn)
     assert ("ds1.mydb.public.t1.id", "ds1.mydb.public.v.id") in col_edges
+
+
+def test_unaliased_single_table_view_keeps_table_name():
+    # pg_get_viewdef for a single-table view: SELECT id FROM t1 (no alias)
+    defn = "SELECT id FROM t1"
+    col_edges = extract_column_edges("ds1", "mydb", "public", "v", defn)
+    assert ("ds1.mydb.public.t1.id", "ds1.mydb.public.v.id") in col_edges
+    # regression: table name must NOT be dropped
+    assert not any(e[0].endswith(".id") and e[0].count(".") == 3 for e in col_edges)

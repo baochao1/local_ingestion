@@ -86,8 +86,10 @@ def extract_column_edges(ds: str, db: str, schema: str, view: str,
         return []
     # alias (or table name) -> (catalog, db, name)
     alias_map: dict[str, tuple] = {}
+    from_tables: list[tuple] = []
     for t in tree.find_all(exp.Table):
         alias_map[t.alias_or_name] = (t.catalog, t.db, t.name)
+        from_tables.append((t.catalog, t.db, t.name))
 
     tgt_view = FQN_SEP.join((ds, db, schema, view))
     out: list[tuple[str, str]] = []
@@ -95,8 +97,13 @@ def extract_column_edges(ds: str, db: str, schema: str, view: str,
     for proj in select.expressions:
         col_name = proj.alias_or_name
         for col in proj.find_all(exp.Column):
-            tbl = col.table  # alias or bare table name
-            cat, sch, real_tbl = alias_map.get(tbl, (None, None, tbl))
+            tbl = col.table or ""  # unqualified column has empty table reference
+            # `pg_get_viewdef` yields unaliased single-table views (SELECT id FROM t1);
+            # fall back to the sole FROM table so the table name is not lost.
+            if not tbl and len(from_tables) == 1:
+                cat, sch, real_tbl = from_tables[0]
+            else:
+                cat, sch, real_tbl = alias_map.get(tbl, (None, None, tbl))
             src_fqn = _col_fqn(ds, cat, sch, real_tbl, col.name, db, schema)
             tgt_fqn = FQN_SEP.join((tgt_view, col_name))
             key = (src_fqn, tgt_fqn)
