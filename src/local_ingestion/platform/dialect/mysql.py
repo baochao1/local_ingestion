@@ -114,9 +114,11 @@ class MySQLDialect(Dialect):
         return f"SELECT * FROM {table} WHERE RAND() < {float(rate):g}"
 
     def list_accounts_sql(self) -> str:
-        # is_super / account_locked drive risk detection (MySQL 8)
+        # Uniform MOD-08 contract: (name, host, is_super, is_locked).
+        # MySQL 8 exposes the flag as Super_priv / account_locked (no is_super column).
         return (
-            "SELECT user, host, is_super, account_locked "
+            "SELECT user, host, Super_priv = 'Y' AS is_super, "
+            "account_locked = 'Y' AS is_locked "
             "FROM mysql.user ORDER BY user, host"
         )
 

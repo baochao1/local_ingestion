@@ -32,13 +32,15 @@ class CollectResult:
     failed: int = 0
 
 
-def _account_name(ds_type: str, row) -> str:
+def _account_identity(row) -> str:
+    """Uniform (name, host, is_super, is_locked) row -> account identity.
+
+    MySQL/Snowflake grantees appear as ``'user'@'host'``, so the identity must
+    include the host to match the grantee string (PostgreSQL has no host).
+    """
     name = row[0]
     host = row[1] if len(row) > 1 else None
-    # MySQL/Snowflake grantee is 'user'@'host'; normalise accounts to match.
-    if ds_type in ("mysql", "snowflake") and host:
-        return f"{name}@{host}"
-    return name
+    return f"{name}@{host}" if host else name
 
 
 def collect_permissions(session_factory, *, ds_id: int, ds_type: str, db: str,
@@ -52,11 +54,12 @@ def collect_permissions(session_factory, *, ds_id: int, ds_type: str, db: str,
     # 1) accounts
     try:
         for row in conn.execute(text(dialect.list_accounts_sql())):
-            name = _account_name(ds_type, row)
-            is_super = bool(row[1]) if len(row) > 1 else False
-            can_login = bool(row[2]) if len(row) > 2 else True
-            repo.upsert_account(ds_id, name, account_type="user", is_super=is_super,
-                                is_locked=not can_login)
+            # uniform contract: (name, host, is_super, is_locked)
+            identity = _account_identity(row)
+            is_super = bool(row[2]) if len(row) > 2 else False
+            is_locked = bool(row[3]) if len(row) > 3 else False
+            repo.upsert_account(ds_id, identity, account_type="user",
+                                is_super=is_super, is_locked=is_locked)
             res.accounts += 1
     except Exception as exc:
         res.failed += 1

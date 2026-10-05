@@ -169,9 +169,11 @@ class PostgresDialect(Dialect):
         return f"SELECT * FROM {table} TABLESAMPLE BERNOULLI({pct:g})"
 
     def list_accounts_sql(self) -> str:
-        # rolsuper / rolcanlogin drive risk detection (super / locked accounts)
+        # Uniform MOD-08 contract: (name, host, is_super, is_locked).
+        # PostgreSQL roles carry no host; lock state is rolcanlogin, and
+        # non-login roles are excluded to keep the inventory meaningful.
         return (
-            "SELECT rolname, rolsuper, rolcanlogin "
+            "SELECT rolname, NULL::text AS host, rolsuper, false AS is_locked "
             "FROM pg_roles WHERE rolcanlogin ORDER BY rolname"
         )
 
