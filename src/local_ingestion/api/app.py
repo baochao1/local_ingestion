@@ -3,14 +3,35 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from local_ingestion.api.service import MetadataService, WorkflowService
+from local_ingestion.platform.api.routers.datasources import router as _datasource_router
+from local_ingestion.platform.api.routers.scans import router as _scans_router
+from local_ingestion.platform.api.routers.search import router as _search_router
+from local_ingestion.platform.api.routers.catalog_browse import router as _catalog_browse_router
+from local_ingestion.platform.api.routers.classification import router as _classification_router
+from local_ingestion.platform.api.routers.assets import router as _assets_router
+from local_ingestion.platform.api.routers.tasks import router as _tasks_router
+from local_ingestion.platform.api.routers.audit import router as _audit_router
+from local_ingestion.platform.api.routers.partitions import router as _partitions_router
+from local_ingestion.api.routers.changes import router as _changes_router
+from local_ingestion.api.routers.governance import router as _governance_router
+from local_ingestion.api.routers.permissions import router as _permissions_router
+from local_ingestion.platform.api.routers.system import router as _system_router
+from local_ingestion.platform.api.routers.subscriptions import router as _subscriptions_router
+from local_ingestion.api.routers.catalog_overview import router as _catalog_overview_router
+from local_ingestion.api.routers.lineage import router as _lineage_router
+from local_ingestion.api.routers.business import router as _business_router
+from local_ingestion.api.routers.meta import router as _meta_router
 from local_ingestion.api.exceptions import NotFoundError, ValidationError, ConflictError
 from local_ingestion.schema.data.table import Table
 from local_ingestion.schema.data.database import Database
@@ -87,12 +108,37 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
 
 
+def _start_scan_scheduler():
+    """Opt-in periodic scanning (off unless ``SCAN_SCHEDULER=1``).
+
+    Kept disabled by default so importing/starting the app never opens surprise
+    background connections — notably in tests.
+    """
+    if os.getenv("SCAN_SCHEDULER", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return None
+
+    from local_ingestion.platform.scan.scheduler import ScanScheduler
+    from local_ingestion.storage.session import session_scope
+
+    interval = int(os.getenv("SCAN_INTERVAL_MINUTES", "60") or 60)
+    scheduler = ScanScheduler(session_scope, default_interval_minutes=interval)
+    if scheduler.start():
+        logger.info("scan scheduler started (interval=%s min)", interval)
+        return scheduler
+    return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager"""
     logger.info("Starting Local Ingestion API")
-    yield
-    logger.info("Shutting down Local Ingestion API")
+    scheduler = _start_scan_scheduler()
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.stop()
+        logger.info("Shutting down Local Ingestion API")
 
 
 app = FastAPI(
@@ -102,10 +148,68 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# --- 错误归一 ---------------------------------------------------------------
+# 契约约定：所有 4xx/5xx 的 `detail` 必须是**字符串**（不可为对象数组）。
+# FastAPI 默认把 RequestValidationError 序列化成 `[{type, loc, msg, input}]`，
+# 前端一旦把它整体渲染就会抛 "Objects are not valid as a React child" 并整站白屏
+# （见 doc/design/ux-audit-full.md S0#2/S0#3），故在出口统一拍平成可读文案。
+_VALIDATION_TYPE_TEXT = {
+    "missing": "缺少必填字段",
+    "string_type": "应为字符串",
+    "int_type": "应为整数",
+    "int_parsing": "应为整数",
+    "float_parsing": "应为数值",
+    "bool_parsing": "应为布尔值",
+    "enum": "取值不在允许范围内",
+    "value_error": "取值不合法",
+    "string_too_short": "内容过短",
+    "greater_than_equal": "小于允许的最小值",
+    "less_than_equal": "超出允许的最大值",
+}
+
+# loc 里的 body/query/path 描述参数所在位置，不是字段含义，不展示给终端用户。
+_LOC_NOISE = {"body", "query", "path", "header", "cookie"}
+
+
+def _describe_validation_error(exc: RequestValidationError) -> str:
+    parts: List[str] = []
+    for err in exc.errors():
+        loc = [str(p) for p in err.get("loc", ()) if str(p) not in _LOC_NOISE]
+        field = ".".join(loc) or "请求体"
+        reason = _VALIDATION_TYPE_TEXT.get(str(err.get("type", "")), str(err.get("msg", "取值不合法")))
+        parts.append(f"{field}：{reason}")
+    if not parts:
+        return "请求参数有误"
+    return "请求参数有误：" + "；".join(parts)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": _describe_validation_error(exc)},
+    )
+
+
+def _cors_origins() -> list:
+    """CORS 白名单（对标 S0-3）。
+
+    原先是 `allow_origins=["*"]` + `allow_credentials=True`：该组合在浏览器侧
+    本就非法，且等于对任意站点开放跨域请求。现在默认只放本地 dev 前端，
+    生产必须由 `CORS_ORIGINS` 显式配置（未配置则不放行任何来源）。
+    """
+    raw = os.getenv("CORS_ORIGINS", "").strip()
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    if os.getenv("APP_ENV", "dev").lower() in ("prod", "production"):
+        return []
+    return ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -173,6 +277,9 @@ async def get_table(qualified_name: str):
         return table.model_dump()
     except NotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValidationError as e:
+        # FQN 格式非法（如不含 root.child）应返回 422，否则会漏成 500
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
 
 # ============== Database Endpoints ==============
@@ -211,6 +318,8 @@ async def get_database(qualified_name: str):
         return database.model_dump()
     except NotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
 
 # ============== Workflow Endpoints ==============
@@ -254,3 +363,34 @@ async def delete_workflow(workflow_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValidationError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+
+# L3 platform routers (MOD-01 data-source management, etc.)
+app.include_router(_datasource_router)
+app.include_router(_scans_router)
+app.include_router(_search_router)
+app.include_router(_assets_router)
+app.include_router(_changes_router)
+app.include_router(_subscriptions_router)
+app.include_router(_governance_router)
+app.include_router(_permissions_router)
+app.include_router(_system_router)
+# ``/api/v1/tasks/partitions`` must be registered *before* the tasks router, or
+# the literal path would be swallowed by ``/api/v1/tasks/{task_id}`` (422).
+app.include_router(_partitions_router)
+app.include_router(_tasks_router)
+app.include_router(_audit_router)
+app.include_router(_catalog_overview_router)
+# 资产层级浏览（MOD-09 §182-183）：库 → schema → 表 → 字段。
+# 与 ``_catalog_overview_router`` 共用 ``/api/v1/catalog`` 前缀但路径不重叠
+# （``/overview`` vs ``/databases|/schemas|/tables|/columns``），顺序无关。
+app.include_router(_catalog_browse_router)
+# 分类分级（MOD-05）：分级结果此前只被 search 的 gradeMin 间接消费，
+# 用户能触发分级任务却看不到结果。这组只读接口供「分级结果界面」使用。
+app.include_router(_classification_router)
+app.include_router(_lineage_router)
+app.include_router(_business_router)
+# 降级清单（GET /api/v1/meta/degradation）会对外自曝"本产品有多少功能是占位的"，
+# 仅非生产环境注册（对标 S1-9）。
+if os.getenv("APP_ENV", "dev").lower() not in ("prod", "production"):
+    app.include_router(_meta_router)
