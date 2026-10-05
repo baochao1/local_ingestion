@@ -1,0 +1,52 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.page-content {
+  padding: 16px 24px 24px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* --- ux-audit 修复：可访问性护栏（taste-skill §14 通用项） --- */
+
+/* F-016：操作列链接按钮原对比度仅 3.27–4.1:1，未达 WCAG AA 4.5:1。
+   表格操作密集处的小字号链接必须能被弱视用户辨认。 */
+.ant-btn.ant-btn-link {
+  color: #1d4ed8;
+}
+.ant-btn.ant-btn-link.ant-btn-dangerous {
+  color: #c0392b;
+}
+
+/* F-010：小尺寸按钮/复选框的点击热区过小（44×24 / 12×12），
+   统一抬到可用高度并扩大复选框热区，避免误触与误点相邻操作。 */
+.ant-btn.ant-btn-sm {
+  min-height: 32px;
+  padding-inline: 6px;
+}
+.ant-checkbox-wrapper {
+  position: relative;
+}
+.ant-checkbox-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+
+/* F-018：尊重系统的「减少动效」设置（WCAG 2.3.3）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

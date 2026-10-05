@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- **多数据库支持**: 连接 MySQL、PostgreSQL、Snowflake 等数据源
+- **多数据库支持**: PostgreSQL 内置可用；MySQL / Snowflake 安装对应可选依赖（`pip install "local-ingestion[mysql]"`）即可启用
 - **流水线引擎**: 可配置的 ETL 流水线，支持并行执行
 - **工作流调度**: Cron 和间隔调度工作流
 - **数据质量检查**: 内置数据质量验证和分析
@@ -73,7 +73,7 @@ local-ingestion/
 
 | 模块 | 说明 |
 |------|------|
-| `connectors` | MySQL, PostgreSQL, Snowflake 连接器 |
+| `connectors` | MySQL, PostgreSQL, Snowflake 连接器（注册表驱动，详见下文「扩展连接器」） |
 | `engine` | WorkflowRunner, Scheduler, State, Monitor |
 | `pipeline` | TablePipeline, DatabasePipeline, ParallelPipeline |
 
@@ -101,6 +101,50 @@ local-ingestion/
 | `notifications` | 通知服务 (Email, Slack) |
 | `plugins` | 插件系统 (动态加载, 热插拔) |
 
+## 扩展连接器（插件机制）
+
+数据源连接器由 `platform/connectors` 注册表按 `ds_type` 分发，新增数据源**无需修改 `ScanService`**。
+完整设计见 `doc/design/05-connector-registry.md`。
+
+### 已支持类型
+
+| ds_type | 状态 | 说明 |
+|---|---|---|
+| `postgres` / `postgresql` | 稳定 | 内置，已通过真实 E2E |
+| `mysql` / `mariadb` | 实验性 | 需 `pip install "local-ingestion[mysql]"` |
+| `snowflake` | 实验性 | 需 `pip install "local-ingestion[snowflake]"` |
+
+### 三种注册途径
+
+1. **内置**：在 `BUILTIN_SPECS` 追加一个 `ConnectorSpec`（主仓库维护的核心数据源）。
+2. **第三方包（装包即生效）**：声明 entry-point 组 `local_ingestion.connectors`，
+   `pip install` 后无需改动主项目代码、无需重新构建即可被 `scan run` 调度。
+3. **环境变量（临时接入）**：`LOCAL_INGESTION_CONNECTOR_SPECS="your.pkg:SPEC"`。
+
+```python
+# your_connector_pkg/specs.py
+from local_ingestion.platform.connectors import ConnectorSpec
+
+
+class ClickHouseSource:
+    ...
+
+
+SPEC = ConnectorSpec(
+    ds_types=("clickhouse",),
+    connector="your_connector_pkg.source:ClickHouseSource",
+    connection="local_ingestion.schema.service.connection:PostgresConnection",
+)
+```
+
+```toml
+# your_connector_pkg/pyproject.toml
+[project.entry-points."local_ingestion.connectors"]
+clickhouse = "your_connector_pkg.specs:SPEC"
+```
+
+> Snowflake 的 `account` 取数据源 `host` 字段，`warehouse` / `role` 经 `scan_config.connection_options` 传入。
+
 ## 开发
 
 ### 环境设置
@@ -122,9 +166,8 @@ pytest tests/unit/ -v
 pytest tests/unit/integrations/ -v
 ```
 
-> 注：`tests/integration/`（跨进程/真实数据源）目录尚未建立，当前集成测试位于
-> `tests/unit/integrations/`。运行前需安装测试依赖：`pip install -e ".[test]"`；
-> 缺少 `aiohttp` / `pytest-asyncio` 时该目录会收集失败。
+> 注：真实数据源 E2E 位于 `tests/integration/`（需置 `PG_TEST=1` 并提供 PostgreSQL 实例）；
+> `tests/unit/integrations/` 下为跨进程集成用例。运行前需安装测试依赖：`pip install -e ".[test]"`。
 
 ### 代码检查
 

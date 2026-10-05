@@ -22,9 +22,14 @@ ENV/
 htmlcov/
 .tox/
 
+# Playwright MCP / 页面审计产物（截图、report.json 等，不入库）
+.playwright-mcp/
+.ux-audit/
+
 # --- Secrets / local config ---
 .env
 .env.*
+.credential_key
 *.log
 
 # --- Editor / OS ---
@@ -37,3 +42,8 @@ htmlcov/
 
 # --- Node (if any) ---
 node_modules/
+
+# --- Runtime artifacts (server logs / smoke-test reports, not source) ---
+*.err
+*.out
+pages_report.json
