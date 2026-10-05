@@ -47,7 +47,14 @@ export default function DataSourceCreateModal({ open, onClose, onCreated }: Prop
 
   const handleTest = async () => {
     try {
-      const v = await form.validateFields(['dsType', 'host', 'port', 'username', 'password']);
+      const v = await form.validateFields([
+        'dsType',
+        'host',
+        'port',
+        'username',
+        'password',
+        'database',
+      ]);
       setTesting(true);
       const res = await testConnection({
         dsType: v.dsType,
@@ -55,6 +62,8 @@ export default function DataSourceCreateModal({ open, onClose, onCreated }: Prop
         port: v.port ?? null,
         username: v.username ?? null,
         password: v.password ?? null,
+        // 指定库后连通性测试才真正探测目标库，而不是连到默认库
+        database: v.database ?? null,
       });
       // 后端返回 `{connected, readonly, reason}`（ok/success/message 为兼容字段）
       const connected = res?.connected ?? res?.ok ?? res?.success;
@@ -99,6 +108,8 @@ export default function DataSourceCreateModal({ open, onClose, onCreated }: Prop
         samplingEnabled: v.samplingEnabled,
         username: v.username || null,
         password: v.password || null,
+        // 目标库写入 scan_config.database，供后续扫描直接使用（否则只能依赖自动发现）
+        scanConfig: v.database ? { database: v.database } : {},
         // FR-1.5：连接具备写权限（或无法验证只读）时，须显式允许写权限才能注册
         allowWrite: v.allowWrite,
       });
@@ -204,6 +215,15 @@ export default function DataSourceCreateModal({ open, onClose, onCreated }: Prop
           <Col span={12}>
             <Form.Item label="密码" name="password">
               <Input.Password placeholder="可选" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              label="目标数据库"
+              name="database"
+              tooltip="可选，写入 scan_config.database。留空则扫描时自动发现（仅当该服务端只有 1 个用户库时可用）；服务端有多个用户库时必须指定"
+            >
+              <Input placeholder="如 postgres / mydb" />
             </Form.Item>
           </Col>
         </Row>

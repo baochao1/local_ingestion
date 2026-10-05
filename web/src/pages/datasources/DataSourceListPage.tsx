@@ -220,11 +220,11 @@ export default function DataSourceListPage() {
         title={`扫描 ${scanTarget?.code ?? ''}`}
         confirmLoading={scanLoading}
         onCancel={() => setScanTarget(null)}
-        onConfirm={async (allowWrite) => {
+        onConfirm={async (allowWrite, database) => {
           if (!scanTarget) return;
           setScanLoading(true);
           try {
-            const res = await scanDatasource(scanTarget.id, { allowWrite });
+            const res = await scanDatasource(scanTarget.id, { allowWrite, database });
             const runId = res?.id ?? res?.runId ?? res?.scanRunId;
             if (runId) {
               Modal.success({
