@@ -36,7 +36,9 @@ class TestPostgresConnection:
             database="pgdb"
         )
         conn_str = conn.get_connection_string()
-        assert "postgresql://" in conn_str
+        # Explicit driver: SQLAlchemy 2 resolves bare "postgresql://" to psycopg
+        # (v3), while this project ships psycopg2.
+        assert "postgresql+psycopg2://" in conn_str
         assert "pguser" in conn_str
 
 

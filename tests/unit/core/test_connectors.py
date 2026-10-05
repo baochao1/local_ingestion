@@ -220,7 +220,9 @@ class TestPostgresSourceConnector:
             database="testdb",
         )
         conn_str = config.get_connection_string()
-        assert "postgresql://" in conn_str
+        # Explicit driver: SQLAlchemy 2 would otherwise resolve "postgresql://"
+        # to psycopg (v3) while the project ships psycopg2.
+        assert "postgresql+psycopg2://" in conn_str
         assert "testuser:testpass" in conn_str
         assert "localhost:5432" in conn_str
         assert "testdb" in conn_str
