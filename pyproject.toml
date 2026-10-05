@@ -6,9 +6,9 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
     "sqlalchemy>=2.0",
-    "pymysql>=1.0",
+    # Per-datasource drivers are optional extras (see below): a host that only
+    # scans PostgreSQL must not be forced to install pymysql/snowflake.
     "psycopg2-binary>=2.9",
-    "snowflake-sqlalchemy>=1.0",
     "orjson>=3.0",
     "structlog>=23.0",
     "prometheus-client>=0.19",
@@ -21,9 +21,24 @@ dependencies = [
     "apscheduler>=3.10",
     "aiohttp>=3.9",
     "cryptography>=42",
+    # MOD-07 lineage: pure-Python SQL parser for table/column lineage extraction
+    # (no JVM, unlike Apache Calcite). sqlglot>=25 required for lineage API.
+    "sqlglot>=25.0",
 ]
 
 [project.optional-dependencies]
+# One extra per optional datasource. `pip install "local-ingestion[mysql]"`
+# both installs the driver and — because the connector registry dispatches on
+# ds_type — makes the type scannable. No code change, no rebuild.
+mysql = [
+    "pymysql>=1.0",
+]
+snowflake = [
+    "snowflake-sqlalchemy>=1.0",
+]
+all = [
+    "local-ingestion[mysql,snowflake]",
+]
 test = [
     "pytest>=7.0",
     "pytest-mock>=3.0",
