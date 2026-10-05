@@ -53,6 +53,15 @@ export const qk = {
   lineage: {
     impact: (fqn: string) => ['lineage', 'impact', fqn] as const,
   },
+  permissions: {
+    accounts: (dsId: number | string, account?: string) =>
+      ['permissions', 'accounts', dsId, account] as const,
+    matrix: (dsId: number | string) => ['permissions', 'matrix', dsId] as const,
+    risks: (dsId: number | string, severity?: string) =>
+      ['permissions', 'risks', dsId, severity] as const,
+    changes: (dsId: number | string) => ['permissions', 'changes', dsId] as const,
+    export: (dsId: number | string) => ['permissions', 'export', dsId] as const,
+  },
   business: {
     terms: () => ['business', 'terms'] as const,
     entity: (type: string, id: string | number) => ['business', 'entity', type, id] as const,

@@ -26,6 +26,7 @@ import ClassificationOverviewPage from '@/pages/classification/ClassificationOve
 import ClassificationTagsPage from '@/pages/classification/ClassificationTagsPage';
 import ClassificationRulesPage from '@/pages/classification/ClassificationRulesPage';
 import SensitiveAssetsPage from '@/pages/classification/SensitiveAssetsPage';
+import PermissionsPage from '@/pages/permissions/PermissionsPage';
 import DegradedPage from '@/pages/placeholders/DegradedPage';
 
 /**
@@ -107,19 +108,7 @@ export default function AppRoutes() {
           path="lineage/columns/:id"
           element={<DegradedPage module="MOD-07" title="字段级血缘" />}
         />
-        <Route
-          path="permissions/accounts"
-          element={<DegradedPage module="MOD-08" title="账号列表" />}
-        />
-        <Route
-          path="permissions/matrix"
-          element={<DegradedPage module="MOD-08" title="权限矩阵" />}
-        />
-        <Route path="permissions/risks" element={<DegradedPage module="MOD-08" title="风险项" />} />
-        <Route
-          path="permissions/changes"
-          element={<DegradedPage module="MOD-08" title="权限变更" />}
-        />
+        <Route path="permissions" element={<PermissionsPage />} />
         <Route path="business/terms" element={<BusinessTermsPage />} />
         <Route
           path="business/entities"
@@ -141,7 +130,6 @@ export default function AppRoutes() {
         {/* 模块索引路由：无独立首页的模块指向降级占位，供 Sider 菜单直达 */}
         <Route path="profile" element={<DegradedPage module="MOD-04" title="画像与质量" />} />
         <Route path="lineage" element={<DegradedPage module="MOD-07" title="血缘分析" />} />
-        <Route path="permissions" element={<DegradedPage module="MOD-08" title="权限分析" />} />
         <Route path="sampling" element={<DegradedPage module="MOD-03" title="采样" />} />
         <Route path="business" element={<Navigate to="/app/business/terms" replace />} />
         <Route path="admin" element={<DegradedPage module="MOD-11" title="系统管理" />} />

@@ -72,7 +72,7 @@ const MENU: MenuItem[] = [
     ],
   },
   { key: '/app/lineage', label: '血缘', icon: <ApartmentOutlined />, perm: 'lineage:read', planned: true },
-  { key: '/app/permissions', label: '权限分析', icon: <LockOutlined />, perm: 'permission:read', planned: true },
+  { key: '/app/permissions', label: '权限分析', icon: <LockOutlined />, perm: 'permission:read' },
   { key: '/app/sampling', label: '采样', icon: <ExperimentOutlined />, perm: 'sample:execute', planned: true },
   { key: '/app/tasks', label: '任务运维', icon: <SettingOutlined />, perm: 'audit:read' },
   { key: '/app/business', label: '业务元数据', icon: <TeamOutlined />, perm: 'metadata:read' },
