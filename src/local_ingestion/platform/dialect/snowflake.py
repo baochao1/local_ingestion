@@ -114,10 +114,27 @@ class SnowflakeDialect(Dialect):
         return f"SELECT * FROM {table} TABLESAMPLE ({pct:g})"
 
     def list_accounts_sql(self) -> str:
-        return "SHOW USERS"
+        # MOD-08: deliberately unsupported. `SHOW USERS` cannot be wrapped in a
+        # SELECT/WHERE and its column layout does not match the uniform
+        # (name, host, is_super, is_locked) contract, so the collector's
+        # positional row mapping would fabricate accounts like
+        # "ALICE@2024-01-01T09:00" from NAME + CREATED_ON. Raising makes the
+        # collector fail loudly for this dialect instead of writing garbage.
+        # TODO: implement via SNOWFLAKE.ACCOUNT_USAGE.USERS joined with
+        # GRANTS_TO_USERS (role -> user expansion for is_super) once a live
+        # Snowflake account is available to verify the result.
+        raise NotImplementedError(
+            "snowflake account listing is not implemented: SHOW USERS cannot "
+            "satisfy the uniform (name, host, is_super, is_locked) row contract"
+        )
 
     def list_grants_sql(self) -> str:
-        return "SHOW GRANTS TO USER CURRENT_USER()"
+        # See list_accounts_sql. `SHOW GRANTS TO USER CURRENT_USER()` only
+        # covers the scanning role and likewise cannot be parsed row-wise.
+        raise NotImplementedError(
+            "snowflake grant listing is not implemented: SHOW GRANTS cannot "
+            "satisfy the uniform grant row contract"
+        )
 
     def view_definition_sql(self) -> str:
         return (

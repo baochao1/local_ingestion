@@ -124,8 +124,12 @@ def test_snowflake_sql_sanity():
     _assert_sql(d.list_schemas_sql(), "show schemas", ":database")
     _assert_sql(d.list_tables_sql(), "information_schema.tables", ":schema")
     _assert_sql(d.list_columns_sql(), "information_schema.columns", ":schema", ":table")
-    _assert_sql(d.list_accounts_sql(), "show users")
-    _assert_sql(d.list_grants_sql(), "show grants")
+    # MOD-08: permission listing is deliberately *unsupported* rather than
+    # silently mis-parseable — SHOW output cannot satisfy the uniform contract.
+    with pytest.raises(NotImplementedError):
+        d.list_accounts_sql()
+    with pytest.raises(NotImplementedError):
+        d.list_grants_sql()
 
 
 def test_sampling_capability():

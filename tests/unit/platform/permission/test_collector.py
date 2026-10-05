@@ -50,3 +50,15 @@ def test_collector_mysql_grantee_normalised(session_factory):
     # regression: host must map to identity, NOT be misread as is_super
     alice = [a for a in repo.list_accounts(1) if a["account"] == "alice@10.%"][0]
     assert alice["is_super"] is True and alice["is_locked"] is True
+
+
+def test_snowflake_unsupported_fails_cleanly(session_factory):
+    # SHOW-based output would otherwise be parsed positionally (row[1]=host)
+    # and fabricate accounts, so the dialect must refuse instead.
+    fake = _FakeConn([], [])
+    res = collect_permissions(session_factory, ds_id=1, ds_type="snowflake",
+                              db="db", schema="s", conn=fake)
+    assert res.accounts == 0 and res.grants == 0
+    assert res.failed == 2  # both accounts and grants query refused
+    from local_ingestion.platform.permission.repository import PermissionRepository
+    assert PermissionRepository(session_factory).list_accounts(1) == []
