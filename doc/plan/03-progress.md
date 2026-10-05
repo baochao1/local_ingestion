@@ -99,7 +99,7 @@ T-205 占位（`PlaceHolderLineageService` 恒返回 `degraded=True`）已**替�
 DDL/ORM/方言 SQL 已就绪，本次补齐采集器 + 落库 + 风险识别 + 查询 + 接口，**接口由 0/9 落地为 9+ 端点**。
 
 **新增/修改文件**
-- `platform/dialect/{base,postgres,mysql,snowflake}.py`：扩展 `list_accounts_sql`（含 `rolsuper`/`rolcanlogin`/`is_super`/`account_locked`）、`list_grants_sql`（统一 `(grantee, object_type, object_fqn, privilege, grantable)` 五列，表级+列级合并）。PostgreSQL/MySQL 走 `information_schema` SELECT；Snowflake 仍用 `SHOW`（已知缺口，列为后续）。
+- `platform/dialect/{base,postgres,mysql,snowflake}.py`：扩展 `list_accounts_sql`（**统一四列契约 `(name, host, is_super, is_locked)`**；PG 取 `rolsuper`，MySQL 取真实列 `Super_priv`——注意 `mysql.user` **没有** `is_super` 列，早期版本因此会在 MySQL 上直接报错）、`list_grants_sql`（统一 `(grantee, object_type, object_fqn, privilege, grantable)` 五列，表级+列级合并）。PostgreSQL/MySQL 均走 `information_schema` SELECT；**Snowflake 显式抛 `NotImplementedError` 拒绝采集**——`SHOW USERS` 无法包 SELECT 且列位与契约不符，按位取值会把 `CREATED_ON` 当成 host、凭空造出 `ALICE@2024-01-01` 这类假账号。
 - `platform/permission/risk.py`：风险识别引擎（超管 / 过度授权 / 僵尸 / 无主 / 高敏资产授权）。
 - `platform/permission/repository.py`：`account`/`account_grant` 幂等 upsert、`baseline` 快照存于 `datasource.scan_config`、变更 diff。
 - `platform/permission/collector.py`：ADMIN 只读拉取账号/授权 → 落库 + 风险计算（单查询失败隔离，绝不写业务库）。
@@ -111,7 +111,11 @@ DDL/ORM/方言 SQL 已就绪，本次补齐采集器 + 落库 + 风险识别 + �
 
 **竞品对齐（Atlas/Collibra/Alation + GB/T 43697/等保/DCMM）**：超管/过度授权/僵尸/无主识别、高敏资产授权重点标注、权限基线对比与变更追踪、合规报表导出。
 
-**已知缺口（写入计划 `2026-10-05-mod08-permission.md` 自审）**：① Snowflake `SHOW USERS`/`SHOW GRANTS` 解析（当前仅 PG/MySQL SELECT 路径验证）；② PG `last_login` 原生缺失（best-effort，标为僵尸）；③ MySQL 同名账号 `host` 区分已通过 `'user'@'host'` 归一化；④ 责任人关联（MOD-11）降级处理。
+**风险 ack 已闭环**：风险项带内容派生稳定 `id`（`type|account|object_fqn|privilege` 的 md5 前 12 位），`POST /api/v1/permissions/risks/{id}/ack` 将 ack 集合写入 `datasource.scan_config.acked_risks`，`risks()` 回填 `acked` 标志；已补单元 + API 测试。
+
+**高敏规则已接线**：`PermissionQueryService._grade_lookup()` 从 MOD-05 的 `catalog_table`/`catalog_column.grade_level` 读取分级，注册所有点号后缀以匹配方言短名（PG 授权里是 `schema.table` 而 catalog FQN 是全限定），取冲突时的最高级。此前 `grade_lookup` 恒为空，`high_sensitivity` 风险永不触发——现已修复并补测试。
+
+**已知缺口（写入计划 `2026-10-05-mod08-permission.md` 自审）**：① Snowflake 账号/授权采集暂不支持（后续需 `SNOWFLAKE.ACCOUNT_USAGE.USERS` + `GRANTS_TO_USERS` 角色→用户展开判定 `is_super`，待有真实 Snowflake 账号验证后再实现，当前拒绝而非产出脏数据）；② PG `last_login` 原生缺失（best-effort，无登录记录者标为僵尸），生产环境建议接入 `pg_stat_statements`/审计日志或外部 IAM；③ MySQL 同名账号 `host` 区分已通过 `'user'@'host'` 归一化；④ 责任人关联（MOD-11）降级处理（`evaluate_risks(orphan_check=...)` 钩子已就绪，待 MOD-11 用户映射接线后启用）。
 
 ---
 
