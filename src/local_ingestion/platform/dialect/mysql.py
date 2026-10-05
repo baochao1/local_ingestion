@@ -114,10 +114,30 @@ class MySQLDialect(Dialect):
         return f"SELECT * FROM {table} WHERE RAND() < {float(rate):g}"
 
     def list_accounts_sql(self) -> str:
-        return "SELECT user, host FROM mysql.user ORDER BY user, host"
+        # is_super / account_locked drive risk detection (MySQL 8)
+        return (
+            "SELECT user, host, is_super, account_locked "
+            "FROM mysql.user ORDER BY user, host"
+        )
 
     def list_grants_sql(self) -> str:
-        return "SHOW GRANTS FOR CURRENT_USER"
+        # Uniform contract via information_schema (MySQL 8). grantee is 'user'@'host'.
+        return """
+        SELECT grantee,
+               'table' AS object_type,
+               CONCAT(table_schema, '.', table_name) AS object_fqn,
+               privilege_type AS privilege,
+               IS_GRANTABLE = 'YES' AS grantable
+        FROM information_schema.table_privileges
+        UNION ALL
+        SELECT grantee,
+               'column' AS object_type,
+               CONCAT(table_schema, '.', table_name, '.', column_name) AS object_fqn,
+               privilege_type AS privilege,
+               IS_GRANTABLE = 'YES' AS grantable
+        FROM information_schema.column_privileges
+        ORDER BY grantee, object_fqn
+        """
 
     def view_definition_sql(self) -> str:
         return (

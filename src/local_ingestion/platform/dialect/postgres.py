@@ -169,17 +169,31 @@ class PostgresDialect(Dialect):
         return f"SELECT * FROM {table} TABLESAMPLE BERNOULLI({pct:g})"
 
     def list_accounts_sql(self) -> str:
+        # rolsuper / rolcanlogin drive risk detection (super / locked accounts)
         return (
-            "SELECT rolname FROM pg_roles "
-            "WHERE rolcanlogin ORDER BY rolname"
+            "SELECT rolname, rolsuper, rolcanlogin "
+            "FROM pg_roles WHERE rolcanlogin ORDER BY rolname"
         )
 
     def list_grants_sql(self) -> str:
-        return (
-            "SELECT grantee, table_schema, table_name, privilege_type "
-            "FROM information_schema.role_table_grants "
-            "ORDER BY grantee, table_schema, table_name"
-        )
+        # Uniform contract: (grantee, object_type, object_fqn, privilege, grantable).
+        # Table + column grants merged; object_fqn = schema.table[.column].
+        return """
+        SELECT grantee,
+               'table'  AS object_type,
+               table_schema || '.' || table_name AS object_fqn,
+               privilege_type AS privilege,
+               is_grantable = 'YES' AS grantable
+        FROM information_schema.role_table_grants
+        UNION ALL
+        SELECT rg.grantee,
+               'column' AS object_type,
+               rg.table_schema || '.' || rg.table_name || '.' || rg.column_name AS object_fqn,
+               rg.privilege_type AS privilege,
+               rg.is_grantable = 'YES' AS grantable
+        FROM information_schema.role_column_grants rg
+        ORDER BY grantee, object_fqn
+        """
 
     def view_definition_sql(self) -> str:
         return """
