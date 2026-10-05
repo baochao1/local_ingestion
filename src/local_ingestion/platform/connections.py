@@ -148,8 +148,16 @@ SAMPLE = ConnectionPurpose.SAMPLE
 ADMIN = ConnectionPurpose.ADMIN
 
 
+_DS_TYPE_ALIASES: dict[str, str] = {
+    # 同一引擎的常见别名，统一归一到 READONLY_PROBE_SQL / evaluate_readonly
+    # 所用的规范名，避免 "postgresql" 找不到探针而被误判为可写。
+    "postgresql": "postgres",
+}
+
+
 def _normalize_ds_type(ds_type: str) -> str:
-    return (ds_type or "").strip().lower()
+    normalized = (ds_type or "").strip().lower()
+    return _DS_TYPE_ALIASES.get(normalized, normalized)
 
 
 def build_url(

@@ -83,7 +83,10 @@ class ColumnSnapshot(Base):
 
 class ChangeEvent(Base):
     __tablename__ = "change_event"
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # Composite PK (id, detected_at) on a partitioned table; ``id`` is a PG
+    # IDENTITY column, so autoincrement must be declared explicitly for the ORM
+    # to fetch the generated value back on INSERT ... RETURNING.
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False, primary_key=True)
     scan_run_id: Mapped[int | None] = mapped_column(BigInteger)
     datasource_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -95,13 +98,20 @@ class ChangeEvent(Base):
     before_json: Mapped[dict | None] = mapped_column(JSONB)
     after_json: Mapped[dict | None] = mapped_column(JSONB)
     notified: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    # T-204 change-confirmation closure (FR-7.9)
+    ack_status: Mapped[str] = mapped_column(Text, server_default="pending", nullable=False)
+    ack_action: Mapped[str | None] = mapped_column(Text)
+    ack_by: Mapped[str | None] = mapped_column(Text)
+    ack_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
     __table_args__ = (
         Index("idx_change_run", "scan_run_id"),
         Index("idx_change_sev", "severity", desc(detected_at)),
         Index("idx_change_entity", "entity_type", "entity_fqn", desc(detected_at)),
-        CheckConstraint("change_type IN ('added','deleted','modified','renamed')", name="ck_change_type"),
+        Index("idx_change_ack", "ack_status", desc(detected_at)),
+        CheckConstraint("change_type IN ('table_added','table_removed','table_renamed','column_added','column_removed','column_renamed','type_changed','nullable_changed','comment_changed')", name="ck_change_type"),
         CheckConstraint("severity IN ('breaking','structural','descriptive')", name="ck_change_sev"),
+        CheckConstraint("ack_status IN ('pending','closed')", name="ck_change_ack"),
         {"postgresql_partition_by": "RANGE (detected_at)"},
     )
 
@@ -236,6 +246,8 @@ class NotificationSubscription(Base):
     subscriber: Mapped[str] = mapped_column(Text, nullable=False)
     scope_type: Mapped[str] = mapped_column(Text, nullable=False)
     scope_fqn: Mapped[str | None] = mapped_column(Text)
+    # 订阅可限定到数据源（领域模型 SubscriptionView.datasource_id）
+    datasource_id: Mapped[int | None] = mapped_column(BigInteger)
     min_severity: Mapped[str] = mapped_column(Text, server_default="structural", nullable=False)
     channel: Mapped[str] = mapped_column(Text, nullable=False)
     channel_conf: Mapped[dict] = mapped_column(JSONB, server_default="'{}'::jsonb", nullable=False)
@@ -333,9 +345,88 @@ class AccountUserMapping(Base):
     __table_args__ = (Index("uq_acctuser", "account_id", "user_id", unique=True),)
 
 
+# ---------------------------------------------------------------------------
+# MOD-12 governance process: approvals + tickets (collaborative workflow)
+# ---------------------------------------------------------------------------
+class ApprovalRequest(Base):
+    __tablename__ = "approval_request"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, server_default="0", nullable=False)
+    resource_type: Mapped[str] = mapped_column(Text, nullable=False)
+    resource_fqn: Mapped[str] = mapped_column(Text, nullable=False)
+    action_type: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_by: Mapped[str] = mapped_column(Text, nullable=False)
+    approver: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default="pending", nullable=False)
+    priority: Mapped[str] = mapped_column(Text, server_default="P2", nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[str | None] = mapped_column(Text)
+    decided_comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
+    __table_args__ = (
+        Index("idx_approval_status", "status", desc(created_at)),
+        Index("idx_approval_resource", "resource_type", "resource_fqn"),
+        Index("idx_approval_approver", "approver"),
+        CheckConstraint(
+            "status IN ('pending','approved','rejected')", name="ck_approval_status"),
+        CheckConstraint(
+            "action_type IN ('publish','classify','sensitive_tag','delete')",
+            name="ck_approval_action"),
+    )
+
+
+class GovernanceTicket(Base):
+    __tablename__ = "governance_ticket"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, server_default="0", nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    ticket_type: Mapped[str] = mapped_column(Text, server_default="data_issue", nullable=False)
+    priority: Mapped[str] = mapped_column(Text, server_default="P2", nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default="open", nullable=False)
+    reporter: Mapped[str] = mapped_column(Text, nullable=False)
+    assignee: Mapped[str | None] = mapped_column(Text)
+    related_fqn: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(Text, server_default="manual", nullable=False)
+    sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
+    __table_args__ = (
+        Index("idx_ticket_status", "status", desc(created_at)),
+        Index("idx_ticket_type", "ticket_type"),
+        Index("idx_ticket_assignee", "assignee"),
+        Index("idx_ticket_related", "related_fqn"),
+        CheckConstraint(
+            "status IN ('open','in_progress','resolved','closed')", name="ck_ticket_status"),
+        CheckConstraint(
+            "ticket_type IN ('data_issue','access_request','change_auto','other')",
+            name="ck_ticket_type"),
+    )
+
+
+class GovernanceComment(Base):
+    __tablename__ = "governance_comment"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, server_default="0", nullable=False)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)  # approval | ticket
+    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    author: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
+    __table_args__ = (
+        Index("idx_gcomment_target", "target_type", "target_id", desc(created_at)),
+        CheckConstraint("target_type IN ('approval','ticket')", name="ck_gcomment_target"),
+    )
+
+
 __all__ = [
     "ScanRun", "TableSnapshot", "ColumnSnapshot", "ChangeEvent", "LineageTableEdge",
     "LineageColumnEdge", "LineageClosure", "Account", "AccountGrant", "SampleValue",
     "AuditLog", "NotificationSubscription", "NotificationLog", "AppUser", "Role",
     "Permission", "RolePermission", "UserRole", "DataPolicy", "AccountUserMapping",
+    "ApprovalRequest", "GovernanceTicket", "GovernanceComment",
 ]

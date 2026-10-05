@@ -66,7 +66,10 @@ class PostgresConnection(DatabaseConnection):
 
         db = f"/{self.database}" if self.database else ""
 
-        return f"postgresql://{auth}{host}:{port}{db}"
+        # SQLAlchemy 2 resolves a bare "postgresql://" to psycopg (v3). This
+        # project ships psycopg2 (see pyproject and platform.connections
+        # DRIVERNAMES), so name the driver explicitly like the other dialects do.
+        return f"postgresql+psycopg2://{auth}{host}:{port}{db}"
 
 
 class SqlServerConnection(DatabaseConnection):

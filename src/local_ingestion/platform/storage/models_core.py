@@ -64,7 +64,8 @@ class Datasource(Base, TimestampMixin, SoftDeleteMixin):
         Index("uq_datasource_code", "code", unique=True, postgresql_where="deleted_at IS NULL"),
         Index("idx_datasource_tenant", "tenant_id", postgresql_where="deleted_at IS NULL"),
         CheckConstraint(
-            "ds_type IN ('mysql','postgres','snowflake','sqlserver','bigquery','other')",
+            "ds_type IN ('mysql','mariadb','postgres','postgresql',"
+            "'snowflake','sqlserver','bigquery','other')",
             name="ck_datasource_type",
         ),
     )

@@ -10,7 +10,12 @@ from local_ingestion.cli.base import CLIContext, CommandGroup
 from local_ingestion.cli.parser import build_parser, create_context
 from local_ingestion.cli.commands.workflow import WorkflowCommandGroup
 from local_ingestion.cli.commands.serve import ServeCommandGroup
-from local_ingestion.cli.commands.scan import ScanMySQLCommand, ScanPostgresCommand
+from local_ingestion.cli.commands.scan import (
+    ScanClassifyCommand,
+    ScanMySQLCommand,
+    ScanPostgresCommand,
+    ScanRunCommand,
+)
 
 __version__ = "0.1.0"
 __all__ = ["main", "version", "serve"]
@@ -51,6 +56,8 @@ class LocalIngestionCLI:
         self._scan_commands = {
             "mysql": ScanMySQLCommand(self.context),
             "postgres": ScanPostgresCommand(self.context),
+            "run": ScanRunCommand(self.context),
+            "classify": ScanClassifyCommand(self.context),
         }
 
     def get_command_group(self, name: str) -> Optional[any]:
@@ -90,7 +97,7 @@ class LocalIngestionCLI:
 
         if command == "scan":
             if len(args) < 2:
-                self._print_error("Usage: scan <mysql|postgres> [options]")
+                self._print_error("Usage: scan <mysql|postgres|run|classify> [options]")
                 return 1
             scan_type = args[1]
             scan_cmd = self._scan_commands.get(scan_type)
@@ -114,8 +121,10 @@ Commands:
   scan        Scan database and extract metadata
 
 Scan Subcommands:
-  mysql       Scan MySQL database
-  postgres    Scan PostgreSQL database
+  mysql       Scan MySQL database (连接预览，不写入目录)
+  postgres    Scan PostgreSQL database (连接预览，不写入目录)
+  run         摄取已注册数据源的元数据并写入 catalog_*（含 MOD-05 分级）
+  classify    对目录数据补做/重算敏感度分级
 
 Global Options:
   -v, --verbose    Enable verbose output
@@ -127,6 +136,7 @@ Global Options:
 Examples:
   local-ingestion scan mysql --host 186.64.10.29 --port 3306 --username root --password rootpassword --database mysql --schema mysql
   local-ingestion scan postgres --host localhost --port 5432 --username postgres --password xxx --database mydb
+  local-ingestion scan run --datasource my_pg
   local-ingestion serve --port 8080
 """
         print(help_text)
@@ -144,14 +154,24 @@ def main(args: Optional[List[str]] = None) -> int:
 
     # Handle scan commands directly
     if args and args[0] == "scan" and len(args) > 1:
-        from local_ingestion.cli.commands.scan import ScanMySQLCommand, ScanPostgresCommand
+        from local_ingestion.cli.commands.scan import (
+            ScanClassifyCommand,
+            ScanMySQLCommand,
+            ScanPostgresCommand,
+            ScanRunCommand,
+        )
         context = CLIContext()
         scan_type = args[1]
-        scan_cmd = {"mysql": ScanMySQLCommand(context), "postgres": ScanPostgresCommand(context)}.get(scan_type)
+        scan_cmd = {
+            "mysql": ScanMySQLCommand(context),
+            "postgres": ScanPostgresCommand(context),
+            "run": ScanRunCommand(context),
+            "classify": ScanClassifyCommand(context),
+        }.get(scan_type)
         if scan_cmd:
             return scan_cmd.execute(args[2:])
         print(f"Unknown scan type: {scan_type}", file=sys.stderr)
-        print("Usage: scan <mysql|postgres> [options]", file=sys.stderr)
+        print("Usage: scan <mysql|postgres|run|classify> [options]", file=sys.stderr)
         return 1
 
     # Parse global args first
@@ -195,6 +215,17 @@ def main(args: Optional[List[str]] = None) -> int:
     serve_parser.add_argument("--host", default="0.0.0.0")
     serve_parser.add_argument("--port", type=int, default=8080)
     serve_parser.add_argument("--workers", type=int, default=1)
+
+    # Seed subcommand (T-113 data generation)
+    seed_parser = subparsers.add_parser("seed", help="Generate catalog data (T-113)")
+    seed_parser.add_argument("--scale", choices=["smoke", "dev", "perf"], default="smoke",
+                             help="Preset scale (smoke=1k/20k, dev=50k/1M, perf=300k/10M)")
+    seed_parser.add_argument("--tables", type=int, default=None, help="Override table count")
+    seed_parser.add_argument("--columns", type=int, default=None, help="Override total column count")
+    seed_parser.add_argument("--datasource-code", default="seed_ds")
+    seed_parser.add_argument("--init", action="store_true",
+                             help="Drop + rebuild schema and attach test partitions before seeding")
+    seed_parser.add_argument("--db-url", default=None, help="Override DATABASE_URL")
 
     try:
         parsed_args = parser.parse_args(args)
@@ -240,8 +271,50 @@ def main(args: Optional[List[str]] = None) -> int:
     if getattr(parsed_args, "command", None) == "serve":
         return serve(parsed_args)
     
+    # Handle seed command
+    if getattr(parsed_args, "command", None) == "seed":
+        return _run_seed(parsed_args)
+    
     # Default help
     parser.print_help()
+    return 0
+
+
+def _run_seed(args: argparse.Namespace) -> int:
+    """T-113: generate catalog data at a configurable scale against PostgreSQL."""
+    import os
+
+    from sqlalchemy import create_engine
+
+    from local_ingestion.platform.storage.schema import reset_schema
+    from local_ingestion.platform.storage.seed import SCALES, seed_catalog
+
+    url = args.db_url or os.getenv(
+        "DATABASE_URL",
+        "postgresql+psycopg2://postgres:postgres@localhost:5432/local_ingestion",
+    )
+    engine = create_engine(url, future=True)
+
+    if args.init:
+        print("Resetting schema (drop + rebuild + test partitions) ...")
+        reset_schema(engine)
+
+    tables, columns = SCALES[args.scale]
+    if args.tables:
+        tables = args.tables
+    if args.columns:
+        columns = args.columns
+    cols_per_table = max(1, columns // tables)
+
+    print(f"Seeding {tables} tables x {cols_per_table} cols "
+          f"({tables * cols_per_table} columns) into {url} ...")
+    stats = seed_catalog(
+        engine,
+        tables=tables,
+        columns_per_table=cols_per_table,
+        datasource_code=args.datasource_code,
+    )
+    print("Seed complete:", stats)
     return 0
 
 

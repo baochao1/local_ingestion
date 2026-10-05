@@ -142,6 +142,19 @@ class DatabasePipeline(Pipeline):
         )
         return True
 
+    def _push_deletion_flag(self, enabled: bool) -> None:
+        """Propagate ``mark_deleted_tables`` to the sink, if it understands it.
+
+        The switch lives on :class:`DatabasePipelineConfig`, but the actual
+        soft-delete is performed by the sink — which is injected and
+        platform-specific. Instead of importing it here (L1 must not depend on
+        the platform layer), any sink exposing ``set_mark_deleted_tables`` is
+        driven through that; sinks without it are left untouched.
+        """
+        setter = getattr(self.sink, "set_mark_deleted_tables", None)
+        if callable(setter):
+            setter(enabled)
+
     def _get_table_pipeline(self) -> TablePipeline:
         """Get or create table pipeline instance
 
@@ -258,6 +271,8 @@ class DatabasePipeline(Pipeline):
                 raise RuntimeError("Pipeline validation failed")
 
         with self.execution_context() as context:
+            # Full scan: every in-scope entity was seen, so absence = deletion.
+            self._push_deletion_flag(self.config.mark_deleted_tables)
             metadata = self.extract()
 
             for db in metadata["databases"]:
@@ -341,9 +356,14 @@ class DatabasePipeline(Pipeline):
             current_metadata = self.extract()
 
             if previous_state:
+                # Only the changed subset ever reaches the sink, so "absent"
+                # here means "not part of this change set" — never "deleted".
+                # Marking deletions would wipe everything untouched by the diff.
+                self._push_deletion_flag(False)
                 changes = self._detect_changes(current_metadata, previous_state)
                 self._process_changes(context, changes)
             else:
+                self._push_deletion_flag(self.config.mark_deleted_tables)
                 self._extract_tables_with_context(context)
 
             self.sink.flush()

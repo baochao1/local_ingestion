@@ -180,10 +180,12 @@ class BusinessMetadata(Base, TimestampMixin):
     domain: Mapped[str | None] = mapped_column(Text)
     owner_business: Mapped[str | None] = mapped_column(Text)
     term_codes: Mapped[list] = mapped_column(JSONB, server_default="'[]'::jsonb", nullable=False)
+    tags: Mapped[dict] = mapped_column(JSONB, server_default="'{}'::jsonb", nullable=False)
     __table_args__ = (
         Index("uq_bmeta_entity", "entity_type", "entity_id", unique=True),
         Index("idx_bmeta_domain", "domain"),
         Index("idx_bmeta_alias", "alias", postgresql_using="gin", postgresql_ops={"alias": "gin_trgm_ops"}),
+        Index("idx_bmeta_tags", "tags", postgresql_using="gin", postgresql_ops={"tags": "jsonb_path_ops"}),
     )
 
 

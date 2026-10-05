@@ -35,7 +35,6 @@ from local_ingestion.core.connectors.base import SinkConnector
 from local_ingestion.platform.config import get_database_url
 from local_ingestion.platform.dialect import UnknownDialectError, get_dialect
 from local_ingestion.platform.identity import (
-    detect_orphans,
     resolve_columns,
     resolve_tables,
 )
@@ -68,6 +67,13 @@ class PostgresSinkConfig:
     ds_type: str = "postgres"
     batch_size: int = 5000
     database_url: Optional[str] = None
+    # When True, tables/columns that a scan no longer sees are soft-deleted
+    # instead of lingering forever. Only meaningful when the scan covered the
+    # whole scope being reconciled; ``DatabasePipeline`` pushes its own
+    # ``mark_deleted_tables`` flag here so the switch stays owned by the caller.
+    # Deletion is additionally confined to the schemas actually scanned, so a
+    # filtered (partial) scan can never wipe out-of-scope entities.
+    mark_deleted_tables: bool = False
 
 
 def _child_to_json(child: SourceColumn) -> Dict[str, Any]:
@@ -278,14 +284,27 @@ class PostgresSink(SinkConnector):
         finally:
             self._reset_buffers()
 
-    def _resolve_identities(self) -> None:
-        """FR-13 identity resolution, run inside the flush transaction.
+    def set_mark_deleted_tables(self, enabled: bool) -> None:
+        """Turn deletion-marking on/off (duck-typed contract for pipelines).
 
-        For tables/columns whose FQN changed but structure is preserved, rewrite
-        the *existing* row's FQN to the new one (keeping its stable ``id``) and
-        record the former name in ``entity_alias``. The subsequent
-        ``ON CONFLICT (fqn)`` upsert then hits the same row, so a rename is never
-        reported as delete + add (which would break lineage and lose tags/history).
+        ``DatabasePipeline`` calls this with its own ``mark_deleted_tables``
+        config, so the switch is wired end-to-end without the (L1) pipeline
+        having to import this platform-specific sink.
+        """
+        if self._config is not None:
+            self._config.mark_deleted_tables = bool(enabled)
+
+    def _resolve_identities(self) -> None:
+        """FR-13 identity resolution + soft-delete of vanished entities.
+
+        Runs inside the flush transaction. For tables/columns whose FQN changed
+        but structure is preserved, rewrite the *existing* row's FQN to the new
+        one (keeping its stable ``id``) and record the former name in
+        ``entity_alias``. Then soft-delete (``deleted_at``) any table/column that
+        existed before this scan but is absent now, so removal changes surface in
+        the next schema diff instead of lingering forever. Matched/renamed
+        entities are excluded by ``id`` so a rename is never misclassified as a
+        removal.
         """
         if self._session is None or not self._tables:
             return
@@ -311,7 +330,10 @@ class PostgresSink(SinkConnector):
 
         aliases: List[EntityAlias] = []
         table_map: Dict[str, tuple] = {}  # new_fqn -> (old_id, old_fqn)
+        alive_table_ids: set = set()
         for r in resolutions:
+            if r.entity_id is not None:
+                alive_table_ids.add(r.entity_id)
             if r.action == "renamed":
                 self._session.query(CatalogTable).filter_by(id=r.entity_id).update(
                     {CatalogTable.fqn: r.fqn}, synchronize_session=False
@@ -321,12 +343,29 @@ class PostgresSink(SinkConnector):
                 ))
             table_map[r.fqn] = (r.entity_id, r.old_fqn)
 
-        orphans = detect_orphans(existing_tables, set(self._tables.keys()))
-        if orphans:
-            logger.info(
-                "orphan_tables_detected",
-                count=len(orphans), fqns=[o.fqn for o in orphans][:50],
-            )
+        # Tables that vanished from the *scanned* schemas since the last scan.
+        # Scoping by schema is what keeps a filtered (partial) scan from reading
+        # "not scanned" as "deleted".
+        scanned_schemas = {_parent_schema(fqn) for fqn in self._tables}
+        orphan_table_ids = {
+            t.id for t in existing_tables
+            if _parent_schema(t.fqn) in scanned_schemas
+        } - alive_table_ids
+        if orphan_table_ids:
+            if self._config.mark_deleted_tables:
+                self._session.query(CatalogTable).filter(
+                    CatalogTable.id.in_(orphan_table_ids)
+                ).update({CatalogTable.deleted_at: func.now()},
+                         synchronize_session=False)
+                logger.info(
+                    "orphan_tables_soft_deleted", count=len(orphan_table_ids),
+                    ids=sorted(orphan_table_ids)[:50],
+                )
+            else:
+                logger.info(
+                    "orphan_tables_retained", count=len(orphan_table_ids),
+                    note="mark_deleted_tables 未开启，保留历史实体",
+                )
 
         table_ids = [t.id for t in existing_tables]
         existing_columns = (
@@ -346,6 +385,7 @@ class PostgresSink(SinkConnector):
                 self._column_table_fqn[col_fqn], []
             ).append(row)
 
+        alive_col_ids: set = set()
         for tfqn, cur_cols in cur_cols_by_table.items():
             old_id, old_fqn = table_map.get(tfqn, (None, None))
             if old_id is None or old_fqn is None:
@@ -356,6 +396,7 @@ class PostgresSink(SinkConnector):
             ):
                 if cr.entity_id is None:
                     continue
+                alive_col_ids.add(cr.entity_id)
                 self._session.query(CatalogColumn).filter_by(id=cr.entity_id).update(
                     {CatalogColumn.fqn: cr.fqn}, synchronize_session=False
                 )
@@ -364,6 +405,28 @@ class PostgresSink(SinkConnector):
                         entity_type="column", entity_id=cr.entity_id,
                         alias_fqn=cr.alias_fqn,
                     ))
+
+        # Columns that vanished (dropped columns, or columns of a removed
+        # table), again confined to the tables this scan actually reconciled.
+        scope_table_ids = alive_table_ids | orphan_table_ids
+        orphan_col_ids = {
+            c.id for c in existing_columns if c.table_id in scope_table_ids
+        } - alive_col_ids
+        if orphan_col_ids:
+            if self._config.mark_deleted_tables:
+                self._session.query(CatalogColumn).filter(
+                    CatalogColumn.id.in_(orphan_col_ids)
+                ).update({CatalogColumn.deleted_at: func.now()},
+                         synchronize_session=False)
+                logger.info(
+                    "orphan_columns_soft_deleted", count=len(orphan_col_ids),
+                    ids=sorted(orphan_col_ids)[:50],
+                )
+            else:
+                logger.info(
+                    "orphan_columns_retained", count=len(orphan_col_ids),
+                    note="mark_deleted_tables 未开启，保留历史实体",
+                )
 
         for a in aliases:
             self._session.add(a)

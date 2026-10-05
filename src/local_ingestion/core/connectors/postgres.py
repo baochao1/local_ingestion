@@ -216,7 +216,12 @@ class PostgresSourceConnector(SourceConnector):
                 last_analyze = row[6]
                 last_autoanalyze = row[7]
 
-                table_kind = "VIEW" if table_type in ("v", "m") else "TABLE"
+                # relkind: r=普通表 p=分区父表 v=视图 m=物化视图 f=外部表。
+                # 物化视图曾与视图合并，外部表从未产出；放开后与 DDL 的
+                # TABLE / VIEW / MATERIALIZED_VIEW / EXTERNAL 四值对齐（对标 P0-3）。
+                table_kind = {"v": "VIEW", "m": "MATERIALIZED_VIEW", "f": "EXTERNAL"}.get(
+                    table_type, "TABLE"
+                )
 
                 table = Table(
                     name=table_name,
@@ -235,7 +240,15 @@ class PostgresSourceConnector(SourceConnector):
         return tables
 
     def fetch_columns(self, table: Table) -> List[Column]:
-        """Fetch columns for a PostgreSQL table
+        """Fetch columns for a PostgreSQL table.
+
+        Reads ``information_schema.columns`` (stable across PG versions and
+        available to read-only accounts) and joins the physical catalog for
+        ``format_type`` display strings and column comments.
+
+        Note: the previous query referenced ``pg_attribute.col_default`` and
+        ``pg_attrdef.adsrc``; neither exists on PostgreSQL 12+, so every live
+        scan raised "column does not exist".
 
         Args:
             table: Table object
@@ -248,58 +261,37 @@ class PostgresSourceConnector(SourceConnector):
             result = self._execute_with_retry(
                 """
                 SELECT
-                    a.attname,
+                    c.column_name,
                     pg_catalog.format_type(a.atttypid, a.atttypmod),
-                    COALESCE(d.description, ''),
-                    a.attnotnull,
-                    COALESCE(pg_get_expr(ad.adbin, ad.adrelid), ''),
-                    a.attnum,
-                    CASE
-                        WHEN a.atttypid IN (pg_catalog.oidvectortypid(), pg_catalog.oidarraytypmodtyp())
-                        THEN NULL
-                        ELSE COALESCE(bt.typtypmod, a.atttypmod)
-                    END,
-                    CASE
-                        WHEN a.atttypid IN (pg_catalog.oidvectortypid(), pg_catalog.oidarraytypmodtyp())
-                        THEN NULL
-                        WHEN a.atttypid IN (21, 23, 20)
-                        THEN NULL
-                        ELSE COALESCE(bt.typprecision, NULL)
-                    END,
-                    CASE
-                        WHEN a.atttypid IN (pg_catalog.oidvectortypid(), pg_catalog.oidarraytypmodtyp())
-                        THEN NULL
-                        ELSE COALESCE(bt.typscale, NULL)
-                    END,
-                    COALESCE(col_default, ''),
-                    ai.adsrc
-                FROM pg_attribute a
-                JOIN pg_class pc ON pc.oid = a.attrelid
-                LEFT JOIN pg_description d ON d.objoid = a.attrelid AND d.objsubid = a.attnum
-                LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
-                LEFT JOIN pg_type bt ON bt.oid = a.atttypid
-                LEFT JOIN pg_attribute ai ON ai.attrelid = ad.adrelid AND ai.attname = 'attnum' AND ai.attnum = 1
-                WHERE a.attrelid = (
-                    SELECT oid FROM pg_class WHERE relname = :table
-                    AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = :schema)
-                )
-                AND a.attnum > 0
-                AND NOT a.attisdropped
-                ORDER BY a.attnum
+                    COALESCE(pgd.description, ''),
+                    c.is_nullable,
+                    COALESCE(c.column_default, ''),
+                    c.ordinal_position,
+                    c.character_maximum_length,
+                    c.numeric_precision,
+                    c.numeric_scale
+                FROM information_schema.columns c
+                JOIN pg_class pc
+                  ON pc.relname = c.table_name
+                 AND pc.relnamespace = (
+                     SELECT oid FROM pg_namespace WHERE nspname = c.table_schema
+                 )
+                JOIN pg_attribute a
+                  ON a.attrelid = pc.oid AND a.attname = c.column_name
+                LEFT JOIN pg_description pgd
+                  ON pgd.objoid = pc.oid AND pgd.objsubid = a.attnum
+                WHERE c.table_schema = :schema
+                  AND c.table_name = :table
+                  AND NOT a.attisdropped
+                ORDER BY c.ordinal_position
                 """,
                 {"schema": table.databaseSchema, "table": table.name},
             )
 
             for row in result:
-                column_name = row[0]
-                data_type_display = row[1]
-                description = row[2]
-                is_nullable = not row[3]
-                default_value = row[4]
-                ordinal_position = row[5]
-                precision_val = row[7]
-                scale_val = row[8]
-                column_default = row[9]
+                (column_name, data_type_display, description, is_nullable,
+                 default_value, ordinal_position, data_length, precision_val,
+                 scale_val) = row
 
                 data_type_enum = self._map_postgres_type(data_type_display)
 
@@ -307,11 +299,12 @@ class PostgresSourceConnector(SourceConnector):
                     name=column_name,
                     dataType=data_type_enum,
                     dataTypeDisplay=data_type_display,
+                    dataLength=int(data_length) if data_length else None,
                     precision=int(precision_val) if precision_val else None,
                     scale=int(scale_val) if scale_val else None,
-                    nullable=is_nullable,
+                    nullable=(is_nullable == "YES"),
                     ordinalPosition=ordinal_position,
-                    default=str(column_default) if column_default else None,
+                    default=default_value or None,
                     description=description or None,
                 )
                 columns.append(column)

@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import asdict, is_dataclass
 from typing import Any, List, Mapping, Tuple
 
 from pydantic import BaseModel
@@ -88,6 +89,12 @@ def _convert(obj: Any, key_fn: Any, max_depth: int, depth: int) -> Any:
         # pydantic v2：转成纯 dict 后继续递归，嵌套模型也会被展开。
         return _convert(obj.model_dump(), key_fn, max_depth, depth + 1)
 
+    if is_dataclass(obj) and not isinstance(obj, type):
+        # dataclass 实例：与 BaseModel 分支对称，转 dict 后继续递归。
+        # 必须排除 dataclass *类型* 本身——``is_dataclass(cls)`` 对类也返回 True，
+        # 若不排除，``asdict`` 会抛 TypeError。
+        return _convert(asdict(obj), key_fn, max_depth, depth + 1)
+
     if isinstance(obj, Mapping):
         return {
             _convert_key(k, key_fn): _convert(v, key_fn, max_depth, depth + 1)
@@ -106,8 +113,9 @@ def _convert(obj: Any, key_fn: Any, max_depth: int, depth: int) -> Any:
 def camelize(obj: Any, *, max_depth: int = MAX_DEPTH) -> Any:
     """把 snake_case 结构递归转成 camelCase。
 
-    支持 ``dict`` / ``list`` / ``tuple`` / pydantic v2 model（走 ``model_dump()``）
-    的任意嵌套组合；叶子值（含字符串 value）原样返回——**只改 key，不改 value**。
+    支持 ``dict`` / ``list`` / ``tuple`` / pydantic v2 model（走 ``model_dump()``）/
+    dataclass 实例（走 ``asdict()``）的任意嵌套组合；叶子值（含字符串 value）
+    原样返回——**只改 key，不改 value**。
 
     Raises:
         SerializationDepthError: 超过 ``max_depth``。
