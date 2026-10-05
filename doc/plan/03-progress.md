@@ -94,6 +94,27 @@ T-205 占位（`PlaceHolderLineageService` 恒返回 `degraded=True`）已**替�
 
 ---
 
+## 2.6 MOD-08 账号权限分析 实现状态（2026-10-05, 分支 `feat/mod07-mod08-lineage-permission`）
+
+DDL/ORM/方言 SQL 已就绪，本次补齐采集器 + 落库 + 风险识别 + 查询 + 接口，**接口由 0/9 落地为 9+ 端点**。
+
+**新增/修改文件**
+- `platform/dialect/{base,postgres,mysql,snowflake}.py`：扩展 `list_accounts_sql`（含 `rolsuper`/`rolcanlogin`/`is_super`/`account_locked`）、`list_grants_sql`（统一 `(grantee, object_type, object_fqn, privilege, grantable)` 五列，表级+列级合并）。PostgreSQL/MySQL 走 `information_schema` SELECT；Snowflake 仍用 `SHOW`（已知缺口，列为后续）。
+- `platform/permission/risk.py`：风险识别引擎（超管 / 过度授权 / 僵尸 / 无主 / 高敏资产授权）。
+- `platform/permission/repository.py`：`account`/`account_grant` 幂等 upsert、`baseline` 快照存于 `datasource.scan_config`、变更 diff。
+- `platform/permission/collector.py`：ADMIN 只读拉取账号/授权 → 落库 + 风险计算（单查询失败隔离，绝不写业务库）。
+- `platform/permission/service.py`：`matrix`/实体授权/风险/变更/导出。
+- `platform/permission/tasks.py`：注册 `permission.collect`（`ADMIN` 只读，独立触发，不挂 scan 依赖链）。
+- `api/routers/permissions.py` + `api/app.py`：9 端点（accounts / accounts/{account}/grants / matrix / entities/grants / risks / risks/{id}/ack / changes / baseline/refresh / tasks / export）。
+
+**测试**：`tests/unit/platform/permission/{test_risk,test_repository,test_collector,test_service,test_tasks,test_api}.py` + `tests/integration/test_permission_pg.py`（建真实角色+授权跑端到端）。
+
+**竞品对齐（Atlas/Collibra/Alation + GB/T 43697/等保/DCMM）**：超管/过度授权/僵尸/无主识别、高敏资产授权重点标注、权限基线对比与变更追踪、合规报表导出。
+
+**已知缺口（写入计划 `2026-10-05-mod08-permission.md` 自审）**：① Snowflake `SHOW USERS`/`SHOW GRANTS` 解析（当前仅 PG/MySQL SELECT 路径验证）；② PG `last_login` 原生缺失（best-effort，标为僵尸）；③ MySQL 同名账号 `host` 区分已通过 `'user'@'host'` 归一化；④ 责任人关联（MOD-11）降级处理。
+
+---
+
 ## 3. 换电脑环境搭建（必读）
 
 ```bash
