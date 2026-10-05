@@ -118,3 +118,10 @@ class MySQLDialect(Dialect):
 
     def list_grants_sql(self) -> str:
         return "SHOW GRANTS FOR CURRENT_USER"
+
+    def view_definition_sql(self) -> str:
+        return (
+            "SELECT table_name AS view_name, view_definition "
+            "FROM information_schema.views "
+            "WHERE table_schema = :schema ORDER BY table_name"
+        )

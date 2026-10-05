@@ -91,3 +91,13 @@ class Dialect(ABC):
     def list_grants_sql(self) -> str:
         """SQL returning privilege grants (grantee / object / privilege)."""
         raise NotImplementedError(f"{self.name} has no grant listing SQL")
+
+    # -- view definitions (MOD-07) -----------------------------------------
+    def view_definition_sql(self) -> str:
+        """SQL returning ``(view_name, view_definition)`` for views in ``:schema``.
+
+        Used to derive table-level lineage deterministically from view bodies
+        (design D5). The returned definition is parsed by ``sqlglot`` in the
+        lineage collector; callers must bind the ``:schema`` parameter.
+        """
+        raise NotImplementedError(f"{self.name} has no view-definition SQL")

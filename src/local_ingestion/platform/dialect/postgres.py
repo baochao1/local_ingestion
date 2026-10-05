@@ -180,3 +180,13 @@ class PostgresDialect(Dialect):
             "FROM information_schema.role_table_grants "
             "ORDER BY grantee, table_schema, table_name"
         )
+
+    def view_definition_sql(self) -> str:
+        return """
+        SELECT c.relname AS view_name,
+               pg_get_viewdef(c.oid, true) AS view_definition
+        FROM pg_class c
+        WHERE c.relkind IN ('v', 'm')
+          AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = :schema)
+        ORDER BY c.relname
+        """
