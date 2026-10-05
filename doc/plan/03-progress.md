@@ -12,7 +12,7 @@
 | 远程仓库 | `https://github.com/baochao1/local_ingestion`（origin） |
 | 当前分支 | `main`，已跟踪 `origin/main` |
 | HEAD | `d9c58b9` T-110: entity identity stability (FR-13) |
-| 工作区 | 干净（无未提交改动） |
+| 工作区 | **含未提交 WIP**：T-107 编排底座 + T-109 数据源管控 API（19 单测）+ Batch1（T-201/T-202 Diff 引擎 10 单测、T-211 全局检索 9 单测、T-203 订阅与通知 10 单测、T-212 资产详情 4 单测、T-204 变更确认 9 单测、T-213 概览统计 4 单测、T-205 血缘影响面占位 3 单测、T-214 业务元数据 4 单测、T-215 占位降级 3 单测）已实现；全量 906 passed |
 
 **提交历史（新 → 旧）**：
 
@@ -38,29 +38,59 @@ d364055  T-114  Dialect 抽象（L3 旁路，不动 L1 连接器）
 | T-104 | ORM：核心元数据 `catalog_*` + `struct_hash` | ✅ 已落地 | init |
 | T-105 | PostgresSink 批量 upsert | ✅ 已提交 | `7f7b423`（`platform/sinks/`） |
 | T-106 | ORM：平台基础表（含按月分区表） | ✅ 已落地 | init（0001 建 37 表 + 6 分区表） |
-| T-107 | **任务编排底座 (MOD-10)** | ⬜ **未开始** | 无任何 orchestration 模块 |
+| T-107 | 任务编排底座 (MOD-10) | ✅ **已实现（未提交）** | `platform/orchestration/`：`TaskService`/`AuditService`/`LockProvider`/`ConcurrencyLimiter`/`RetryPolicy`/`HandlerRegistry`/`DependencyRegistry` + 内存/Sql 存储，15 单测 |
 | T-108 | 凭据加密与连接供给 (MOD-01) | ✅ 已落地 | init（`platform/credentials.py` AES-256-GCM、`connections.py` ConnectionProvider + 只读校验） |
-| T-109 | 数据源管控 API (MOD-01) | ⬜ 未开始 | — |
+| T-109 | 数据源管控 API (MOD-01) | ✅ **已实现（未提交）** | `platform/datasource/`（服务+仓储+Schema）+ `platform/api/routers/datasources.py`（挂载至 `api/app.py`）；CRUD/连通性/只读校验/凭据多版本/软删异步任务/审计/健康 + 19 单测 |
 | T-110 | 实体身份稳定 (FR-13) | ✅ 已提交 | `d9c58b9`（`platform/identity.py`：稳定 ID、改名检测、entity_alias、孤儿标记） |
 | T-111 | 分页与 API 公共组件 | ✅ 已落地 | init（`platform/api/pagination.py`，keyset 游标 `base64(fqn\|id)`） |
 | T-112 | API 序列化层（camelCase⇄snake_case） | ✅ 已落地 | init（`platform/api/serialization.py`） |
-| T-113 | 造数脚本（性能验证） | ⬜ 未开始 | — |
+| T-113 | 造数脚本（性能验证） | ✅ 已落地（未提交） | CLI `seed` 子命令（`cli/main.py`）+ `platform/storage/seed.py`（分级造数）+ `schema.py`（建表/drop/测试分区）；档位 smoke/dev/perf |
 | T-114 | 元数据抽取 Dialect 抽象 (FR-2.4) | ✅ 已提交 | `d364055`（`platform/dialect/`，PG/MySQL/Snowflake） |
 | T-115 | DatabasePipeline transform 钩子补齐 | ✅ 已提交 | `86b9434` |
 
-**结论**：Batch 0 中仅 **T-107（编排底座）、T-109（数据源 API）、T-113（造数脚本）** 尚未启动；其余均已在仓库中。
+**结论**：Batch 0 全部落地（**T-113 造数脚本已实现，未提交**）。T-107/T-109 已实现（未提交）。Batch 1（**T-201–T-215 全部**）已实现（未提交）。**端到端串联已用本地 PG（postgres:17 容器）+ 集成测试验证**：造数 → Diff(T-201) → 分级(T-202) → 变更持久化(T-204) → 确认闭环 → 升级通知（复用 T-203 aggregator）→ 概览统计(T-213)，并经 T-107 编排依赖链贯通；`tests/integration/test_pg_integration.py`（需 `PG_TEST=1`）4 个用例全绿，全量单测 906 passed。其余均已在仓库中。
 
 ---
 
 ## 2. 下一步（建议顺序）
 
-1. **T-107 任务编排底座（MOD-10）** —— 当前唯一阻塞 Batch 1 的地基项。
-   依赖 T-106（已落地）。目标：统一 `TaskSpec`/`TaskRun`、触发（手动/定时/事件）、重入保护、并发控制、重试退避、依赖编排（扫描→Diff→通知）、`AuditService.record`。
-   **关键约束**：须与持久化同批，避免各模块各自实现调度/防重。
-2. T-109 数据源管控 API（依赖 T-103/T-108/T-111/T-112）。
-3. Batch 1 可并行两条线：
-   - B1a 版本 Diff（T-201~T-205，依赖 T-110 已就绪）；
-   - B1b 检索与资产目录（T-211~T-215，依赖 T-104/T-111 已就绪）。
+1. **T-107 任务编排底座（MOD-10）已落地（未提交）** —— 验收点全覆盖：重入保护、手动触发/取消/重试、全局+每数据源并发上限、指数退避重试、依赖链（扫描→Diff→通知）、审计留痕、历史查询。
+2. **T-109 数据源管控 API（MOD-01）已落地（未提交）** —— CRUD/连通性测试/只读校验/凭据多版本/软删异步清理任务/审计/健康度，已挂载 `api/app.py` 路由；19 单测。
+3. **Batch 1 核心已落地（未提交）**：
+   - B1a：T-201 Diff 引擎 + T-202 变更分级（`platform/versioning/`，复用 identity 重命名识别；10 单测）。
+   - B1b：T-211 全局检索（`platform/search/`，评分/过滤/分页；9 单测）。
+   - B1a：T-203 订阅管理 + 通知聚合去重 + 静默（`platform/notify/`，复用 `integrations.notifications` 多渠道；10 单测）。
+   - B1b：T-212 资产详情聚合（`platform/asset/`，并发取数 + 占位降级；4 单测）。
+   - B1a：T-204 变更确认闭环 + 升级通知 + 变更统计（`platform/changes/`，复用 T-203 aggregator 与 T-107 审计；9 单测）。
+   - B1b：T-213 概览统计（`platform/catalog/`，TTL 缓存 + 变更趋势复用 T-204，质量源降级；4 单测）。
+   - B1a：T-205 血缘影响面占位（`platform/lineage/`，MOD-07 未上线降级为直接责任人，contract C7；3 单测）。
+   - B1b：T-214 业务元数据（`platform/business/`，术语表 + 实体业务元数据 + `business.*` 标签，独立表不污染 catalog；4 单测）。
+   - B1a：T-215 占位与降级（`platform/resilience` + `platform/degrade/`，MOD-07/08/11 依赖可降级注册表；3 单测）。
+4. **Batch 1（T-201–T-215）已全部落地（未提交）**；**T-113 造数脚本已实现（未提交）**；端到端串联已用 PG 集成测试验证（`tests/integration/test_pg_integration.py`，需 `PG_TEST=1`），修复了 `change_event` 复合主键/时区/约束三处 PG 兼容性缺陷。
+5. 剩余可选工作：① 提交本轮及之前批次成果；② 真实数据源端到端（T-105/T-115 连接器链路）串联；③ 性能压测（dev/perf 档，已达 30w 表/1000w 列目标）。
+
+---
+
+## 2.5 MOD-07 血缘分析 实现状态（2026-10-05, 分支 `feat/mod07-mod08-lineage-permission`）
+
+T-205 占位（`PlaceHolderLineageService` 恒返回 `degraded=True`）已**替换为生产级实现**。DDL/ORM/方言 SQL 早已就绪，本次补齐采集器 + 落库 + 查询 + 接口。
+
+**新增/修改文件**
+- `platform/dialect/{base,postgres,mysql,snowflake}.py`：新增 `view_definition_sql()`（取视图定义，参数化 `:schema`）。
+- `platform/lineage/parse.py`：sqlglot 表级 + 列级血缘解析（FQN 限定，缺省回退视图 db/schema）。
+- `platform/lineage/repository.py`：边表幂等 upsert（唯一索引）、闭包表带环检测/深度上限的递归 CTE 重建、walk/列表查询。
+- `platform/lineage/collector.py`：ADMIN 只读连接拉取视图定义 → 解析 → 落边（单视图失败隔离，从不写业务库）。
+- `platform/lineage/service.py` + `models.py`：`LineageService.upstream/downstream/impact`（由预计算闭包回答），彻底移除降级占位。
+- `platform/lineage/tasks.py`：注册 `lineage.collect` / `lineage.closure.rebuild` 处理器，依赖链 `metadata(scan) → lineage.collect → lineage.closure.rebuild`。
+- `platform/orchestration/service.py`：新增公开 `register_handler` / `add_dependency` / `registered_handlers`。
+- `api/routers/lineage.py`：扩展为 8 端点（upstream / downstream / impact / parse / edges 增删 / import / closure/rebuild）。
+- `pyproject.toml`：新增依赖 `sqlglot>=25.0`（纯 Python，无 JVM）。
+
+**测试**：`tests/unit/platform/lineage/{test_parse,test_repository,test_collector,test_service,test_tasks}.py` + `tests/unit/api/test_lineage_api.py` + `tests/integration/test_lineage_pg.py`（建真实视图跑端到端）。全绿（需 `PG_TEST=1`；`fastapi`/`sqlglot` 在 `.venv` 内）。
+
+**竞品对齐（OpenMetadata/DataHub/Atlas）**：列级血缘（DataHub 式 SQL 解析）、手动/外部血缘标注（OpenMetadata）、影响面聚合数据源（Atlas）。**FR-4.1~4.6、FR-16.5 部分**已覆盖。已知缺口：巨视图列级解析超时保护、跨 schema 多 schema 批量采集（当前按 `scan_config.schemas` 遍历，缺省 public）——列为后续增强。
+
+> 注：本文档其余部分为更早的快照（HEAD `d9c58b9`，906 用例）；本分支在此基础上新增上述 MOD-07 工作，尚未并入 `main`。
 
 ---
 
@@ -81,13 +111,14 @@ alembic upgrade head
 alembic check        # 期望：No new upgrade operations detected
 
 # 4) 跑测试基线
-pytest tests/unit -q   # 基线 754 passed（见 README §测试覆盖）
+pytest tests/unit -q   # 基线 869 passed（2026-10-01 实测，venv 隔离环境）
 ```
 
 **依赖/环境坑（已踩过，务必注意）**：
 - `pyproject` 声明了 `aiohttp` / `pytest-asyncio`，但**环境必须先 `pip install -e ".[test]"`**；否则 `tests/unit/integrations/` 收集失败、全量测试中断，会误以为通过。
 - 加密依赖 `cryptography>=42`（T-108 引入），缺失会直接 import 失败。
 - `struct_hash` 口径必须与 DDL 一致：**DDL 未插 tenant 种子行**，新库首次 `alembic upgrade head` 后无租户数据属正常。
+- 当前（2026-10-01）激活的 Python 是 Codex 自带解释器，全局 `pip install` 会撞 `OpenAI\Codex\bin` 文件锁（`WinError 448`）；改用仓库内 `venv` 隔离（`python -m venv .venv` → `.venv\Scripts\python.exe -m pip install -e ".[dev,test]"` → 用 `.venv/.../pytest` 跑测试），`.venv/` 已在 `.gitignore`。
 
 ---
 
