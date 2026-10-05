@@ -138,3 +138,24 @@ class LineageRepository:
                 .order_by(LineageClosure.depth)
             ).all()
         return [{"fqn": r[0], "depth": r[1]} for r in rows]
+
+    def list_edges(self, *, column: bool = False, src_fqn: str | None = None,
+                  tgt_fqn: str | None = None, limit: int = 1000) -> list[dict]:
+        """List edges (optionally filtered by endpoint), excluding soft-deleted."""
+        model = LineageColumnEdge if column else LineageTableEdge
+        with self._sf() as s:
+            q = select(model).where(model.deleted_at.is_(None))
+            if src_fqn is not None:
+                q = q.where(model.src_fqn == src_fqn)
+            if tgt_fqn is not None:
+                q = q.where(model.tgt_fqn == tgt_fqn)
+            rows = s.execute(q.limit(limit)).scalars().all()
+        return [
+            {
+                "src_fqn": r.src_fqn,
+                "tgt_fqn": r.tgt_fqn,
+                "edge_source": r.edge_source,
+                "confidence": float(r.confidence),
+            }
+            for r in rows
+        ]
