@@ -112,8 +112,10 @@ def test_mysql_sql_sanity():
     _assert_sql(d.list_schemas_sql(), "information_schema.schemata", ":db")
     _assert_sql(d.list_tables_sql(), "information_schema.tables", ":schema")
     _assert_sql(d.list_columns_sql(), "information_schema.columns", ":schema", ":table")
-    _assert_sql(d.list_accounts_sql(), "mysql.user")
-    _assert_sql(d.list_grants_sql(), "show grants")
+    _assert_sql(d.list_accounts_sql(), "mysql.user", "super_priv")
+    # MOD-08: uniform (grantee, object_type, object_fqn, privilege, grantable)
+    # contract; "SHOW GRANTS" only ever returned CURRENT_USER's own grants.
+    _assert_sql(d.list_grants_sql(), "information_schema.table_privileges", "grantee")
 
 
 def test_snowflake_sql_sanity():

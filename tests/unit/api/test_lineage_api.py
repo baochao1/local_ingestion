@@ -1,11 +1,6 @@
 """MOD-07 T7: lineage REST API (PG-backed)."""
 import os
 
-os.environ.setdefault(
-    "CREDENTIAL_ENCRYPTION_KEY",
-    "6bDIB9Fe9Wuxj51Hreoyxj8hEGZaeSbHGBlxl77er0s=",
-)
-
 import pytest
 from fastapi.testclient import TestClient
 

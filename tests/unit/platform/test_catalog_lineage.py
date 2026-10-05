@@ -4,15 +4,6 @@ Both run against the in-memory stacks — no Postgres required.
 """
 from __future__ import annotations
 
-import os
-
-# The production lineage service now hits the DB (the old placeholder did not),
-# so app startup/DB access requires the credential-encryption key to be present.
-os.environ.setdefault(
-    "CREDENTIAL_ENCRYPTION_KEY",
-    "6bDIB9Fe9Wuxj51Hreoyxj8hEGZaeSbHGBlxl77er0s=",
-)
-
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
