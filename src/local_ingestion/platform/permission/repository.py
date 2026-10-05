@@ -122,26 +122,28 @@ class PermissionRepository:
     def get_grants_of_account(self, ds_id: int, account: str) -> list[dict]:
         with self._sf() as s:
             rows = s.execute(
-                select(AccountGrant).join(Account, AccountGrant.account_id == Account.id).where(
+                select(AccountGrant, Account.account_name).join(
+                    Account, AccountGrant.account_id == Account.id).where(
                     AccountGrant.datasource_id == ds_id, Account.account_name == account,
                     AccountGrant.deleted_at.is_(None),
                 )
-            ).scalars().all()
-        return [self._grant_dict(g) for g in rows]
+            ).all()
+        return [self._grant_dict(g, name) for g, name in rows]
 
     def get_entity_grants(self, object_fqn: str) -> list[dict]:
         with self._sf() as s:
             rows = s.execute(
-                select(AccountGrant).join(Account, AccountGrant.account_id == Account.id).where(
+                select(AccountGrant, Account.account_name).join(
+                    Account, AccountGrant.account_id == Account.id).where(
                     AccountGrant.object_fqn == object_fqn, AccountGrant.deleted_at.is_(None),
                 )
-            ).scalars().all()
-        return [self._grant_dict(g) for g in rows]
+            ).all()
+        return [self._grant_dict(g, name) for g, name in rows]
 
     @staticmethod
-    def _grant_dict(g: AccountGrant) -> dict:
+    def _grant_dict(g: AccountGrant, account_name: str | None = None) -> dict:
         return {
-            "account_id": g.account_id, "privilege": g.privilege,
+            "account": account_name, "account_id": g.account_id, "privilege": g.privilege,
             "object_type": g.object_type, "object_fqn": g.object_fqn,
             "grantable": g.grantable, "detected_at": g.detected_at.isoformat(),
         }
