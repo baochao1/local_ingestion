@@ -18,15 +18,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...api.serialization import camelize, to_camel
-from ...storage.session import session_scope
 from ...classification.service import ClassificationService
-from ...orchestration.audit import AuditService, GLOBAL_AUDIT_SINK
+from ...orchestration.audit import GLOBAL_AUDIT_SINK, AuditService
 from ...orchestration.errors import OrchestrationError, TaskNotFoundError
-from ...orchestration.models import JobType, TaskContext, TaskSpec, TaskStatus, TriggerType
+from ...orchestration.models import (
+    JobType,
+    TaskContext,
+    TaskSpec,
+    TaskStatus,
+    TriggerType,
+)
 from ...orchestration.registry import HandlerRegistry
 from ...orchestration.service import TaskService
 from ...orchestration.store import SqlTaskRunStore, TaskRunStore
+from ...profile.tasks import make_profile_handler
+from ...quality.tasks import make_quality_handler
 from ...scan.service import ScanService
+from ...storage.session import session_scope
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["Tasks"])
 
@@ -58,6 +66,13 @@ def _build_handlers() -> HandlerRegistry:
 
     reg.register(JobType.METADATA, scan_handler)
     reg.register(JobType.CLASSIFY, classify_handler)
+    # 画像（MOD-04 / FR-M1）：此前画像只能由集成测试直接调用 runner 产生，
+    # 用户无从触发。接入后前端「立即采集」可提交 jobType=profile。
+    # handler 依赖注入的 session_factory 是工厂函数，不是 Session 实例。
+    reg.register(JobType.PROFILE, make_profile_handler(session_scope))
+    # 质量（MOD-05 / FR-M5）：此前 QualityService 只能由测试直接调用，无触发路径。
+    # 接入后可由编排提交 jobType=quality 触发用例执行并落库。
+    reg.register(JobType.QUALITY, make_quality_handler(session_scope))
     return reg
 
 

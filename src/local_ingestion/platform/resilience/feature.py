@@ -26,9 +26,14 @@ class FeatureAvailability:
 
 
 def default_availability() -> FeatureAvailability:
-    """Out-of-the-box: all deferred modules are not yet deployed -> degraded."""
+    """Out-of-the-box: MOD-07 lineage is deployed; the rest are still deferred.
+
+    Lineage ships with a collector, a closure table and REST endpoints, so
+    reporting it unavailable hid a working module (FR-M4.5). Pages still degrade
+    to an empty state when nothing has been collected yet (C6).
+    """
     return FeatureAvailability({
-        MOD_LINEAGE: False,
+        MOD_LINEAGE: True,
         MOD_AUTHORIZATION: False,
         MOD_VISIBILITY: False,
     })

@@ -27,6 +27,8 @@ import ClassificationTagsPage from '@/pages/classification/ClassificationTagsPag
 import ClassificationRulesPage from '@/pages/classification/ClassificationRulesPage';
 import SensitiveAssetsPage from '@/pages/classification/SensitiveAssetsPage';
 import PermissionsPage from '@/pages/permissions/PermissionsPage';
+import TableProfilePage from '@/pages/profile/TableProfilePage';
+import TableLineagePage from '@/pages/lineage/TableLineagePage';
 import DegradedPage from '@/pages/placeholders/DegradedPage';
 
 /**
@@ -73,10 +75,9 @@ export default function AppRoutes() {
         <Route path="governance/tickets" element={<TicketsPage />} />
 
         {/* 第二批：MOD-03/04/05 */}
-        <Route
-          path="profile/tables/:id"
-          element={<DegradedPage module="MOD-04" title="表画像" />}
-        />
+        {/* MOD-04 表画像：后端只读接口 /api/v1/profiles 已落地，不再是降级占位。
+            触发画像仍需业务库连接与 PROFILE 任务处理器，页面内按钮暂禁用。 */}
+        <Route path="profile/tables/:id" element={<TableProfilePage />} />
         <Route
           path="profile/quality/rules"
           element={<DegradedPage module="MOD-04" title="质量规则" />}
@@ -102,8 +103,10 @@ export default function AppRoutes() {
           element={<DegradedPage module="MOD-03" title="字段样本值" />}
         />
 
-        {/* 第三批：MOD-07/08 + 业务元数据 */}
-        <Route path="lineage/tables/:id" element={<DegradedPage module="MOD-07" title="表血缘" />} />
+        {/* 第三批：MOD-07/08 + 业务元数据。
+            表血缘已可挂载（后端 upstream/downstream 接口就绪），按 FQN 定位
+            （?fqn=），与资产详情保持一致。 */}
+        <Route path="lineage/tables" element={<TableLineagePage />} />
         <Route
           path="lineage/columns/:id"
           element={<DegradedPage module="MOD-07" title="字段级血缘" />}

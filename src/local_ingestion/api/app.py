@@ -19,6 +19,7 @@ from local_ingestion.platform.api.routers.scans import router as _scans_router
 from local_ingestion.platform.api.routers.search import router as _search_router
 from local_ingestion.platform.api.routers.catalog_browse import router as _catalog_browse_router
 from local_ingestion.platform.api.routers.classification import router as _classification_router
+from local_ingestion.platform.api.routers.profiles import router as _profiles_router
 from local_ingestion.platform.api.routers.assets import router as _assets_router
 from local_ingestion.platform.api.routers.tasks import router as _tasks_router
 from local_ingestion.platform.api.routers.audit import router as _audit_router
@@ -389,6 +390,9 @@ app.include_router(_catalog_browse_router)
 # 用户能触发分级任务却看不到结果。这组只读接口供「分级结果界面」使用。
 app.include_router(_classification_router)
 app.include_router(_lineage_router)
+# 画像只读接口（MOD-04 / FR-M2）。只暴露查询：触发需要业务库连接与
+# JobType.PROFILE 任务处理器，两者尚未接线，留待 profile/tasks.py。
+app.include_router(_profiles_router)
 app.include_router(_business_router)
 # 降级清单（GET /api/v1/meta/degradation）会对外自曝"本产品有多少功能是占位的"，
 # 仅非生产环境注册（对标 S1-9）。

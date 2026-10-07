@@ -28,6 +28,51 @@ logger = structlog.get_logger()
 OWNED_TAGS = ("PII", "HIGH")
 
 
+def merge_value_verdict(
+    name_verdict, value_verdict
+) -> tuple:
+    """Combine name/type grading with value-pattern evidence (FR-M6).
+
+    Returns ``(verdict, extra_properties)``.
+
+    * No value evidence (or the column was skipped by the value scanner) → the
+      name-only verdict stands and no extra properties are added.
+    * Strong value evidence (a pattern matched at or above the confidence
+      threshold) *upgrades* the grade when it is higher than the name verdict, so
+      ``col_7`` holding email addresses becomes PII even with a non-PII name.
+    * Weak value evidence (``needs_review``) never upgrades — it is recorded as
+      ``value_pii_review`` so the review queue can see it, but a low-confidence
+      hit must not be published as fact (QC4).
+    """
+    if value_verdict is None or value_verdict.skipped or not value_verdict.evidence:
+        return name_verdict, {}
+
+    props = {"value_pii_evidence": value_verdict.evidence}
+    if value_verdict.needs_review:
+        # Pattern matched, but not confidently enough to publish — route to review.
+        props["value_pii_review"] = True
+        return name_verdict, props
+
+    if value_verdict.grade > name_verdict.grade_level:
+        upgraded = type(name_verdict)(
+            grade_level=value_verdict.grade,
+            grade_code=GRADE_CODES[value_verdict.grade],
+            is_pii=value_verdict.grade >= PII_GRADE,
+            high_sensitivity=value_verdict.grade >= HIGH_GRADE,
+            reason=f"{name_verdict.reason};value:{','.join(value_verdict.evidence)}",
+        )
+        return upgraded, props
+    return name_verdict, props
+
+#: Imported lazily inside the merge helper to avoid a hard import edge at module
+#: load (classification is imported by many call sites; the value-PII path is
+#: only needed when samples are actually present).
+def _evaluate_values(column_name: str, samples, **kwargs):
+    from ..profile.pii import evaluate_column
+
+    return evaluate_column(column_name, samples, **kwargs)
+
+
 @dataclass
 class ClassificationResult:
     """What one grading pass changed."""

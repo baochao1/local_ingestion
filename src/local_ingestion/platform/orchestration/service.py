@@ -48,6 +48,29 @@ def _default_clock() -> datetime:
 logger = logging.getLogger(__name__)
 
 
+def is_partial_result(stats: object) -> bool:
+    """Whether a handler's result describes partial failure (FR-M9).
+
+    Two accepted spellings:
+
+    * explicit ``{"partial": True}``;
+    * ``{"succeeded": N, "failed": M}`` with both greater than zero.
+
+    Both require *some* success and *some* failure — all-failed is an ordinary
+    failure and all-succeeded an ordinary success, and collapsing either into
+    "partial" would make the status meaningless (edge E8).
+    """
+    if not isinstance(stats, dict):
+        return False
+    if stats.get("partial") is True:
+        return True
+    succeeded = stats.get("succeeded")
+    failed = stats.get("failed")
+    if isinstance(succeeded, int) and isinstance(failed, int):
+        return succeeded > 0 and failed > 0
+    return False
+
+
 class TaskService:
     def __init__(
         self,
@@ -248,6 +271,8 @@ class TaskService:
             if is_cancelled():
                 run.status = TaskStatus.CANCELLED
                 run.error_message = "cancelled"
+            elif success and is_partial_result(run.stats):
+                run.status = TaskStatus.PARTIAL_SUCCESS
             elif success:
                 run.status = TaskStatus.SUCCESS
             else:
@@ -257,6 +282,7 @@ class TaskService:
             self._store.update(run)
             action = {
                 TaskStatus.SUCCESS: "task.success",
+                TaskStatus.PARTIAL_SUCCESS: "task.partial_success",
                 TaskStatus.CANCELLED: "task.cancel",
                 TaskStatus.FAILED: "task.failure",
             }.get(run.status, "task.failure")

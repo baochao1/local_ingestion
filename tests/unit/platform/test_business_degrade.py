@@ -57,7 +57,15 @@ def test_business_metadata_and_tags():
 
 # ----------------------------------------------------------------- T-215 degrade
 def test_placeholders_degrade_by_default():
-    for prov in (LineageSummaryProvider(), AuthorizationProvider(), VisibilityProvider()):
+    """血缘已随 MOD-07 落地，不再默认降级（FR-M4.5）。
+
+    血缘的采集器、闭包表与 REST 接口均已实现，把它报为不可用等于隐藏一个
+    可用模块。其余两个模块仍属未部署，必须降级。
+    """
+    lineage = LineageSummaryProvider().status(default_availability())
+    assert lineage.available is True
+
+    for prov in (AuthorizationProvider(), VisibilityProvider()):
         st = prov.status(default_availability())
         assert st.available is False
         assert st.reason
@@ -73,9 +81,8 @@ def test_availability_flip_makes_dependency_available():
 
 def test_registry_reports_degraded_sources():
     reg = build_default_registry()
-    assert set(reg.degraded_sources()) == {"lineage", "authorization", "visibility"}
-    # flip all available
-    reg._avail.declare(MOD_LINEAGE, True)
+    assert set(reg.degraded_sources()) == {"authorization", "visibility"}
+    # flip the remaining two available
     reg._avail.declare(MOD_AUTHORIZATION, True)
     reg._avail.declare(MOD_VISIBILITY, True)
     assert reg.degraded_sources() == []
@@ -101,5 +108,5 @@ def test_degradation_rest():
     r = client.get("/api/v1/meta/degradation")
     assert r.status_code == 200
     body = r.json()
-    assert set(body["degraded_sources"]) == {"lineage", "authorization", "visibility"}
+    assert set(body["degraded_sources"]) == {"authorization", "visibility"}
     assert len(body["dependencies"]) == 3

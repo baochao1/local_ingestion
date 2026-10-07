@@ -35,7 +35,11 @@ def test_collector_isolates_per_view_failure(session_factory):
     # bad view yields no edges; good view still contributes
     assert res.views == 2
     assert res.table_edges == 1
-    assert res.failed == 0
+    # FR-M4.4: the failure is *counted*, not swallowed — it used to be
+    # indistinguishable from a view with no upstream, so nothing was ever
+    # reported. Isolation means the good view still ran, not that the bad one
+    # was silently ignored.
+    assert res.failed == 1
 
 
 def test_collector_connection_failure_is_reported(session_factory):

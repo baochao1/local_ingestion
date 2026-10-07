@@ -1,8 +1,10 @@
-import { Button, Space, Tag, Tooltip, Typography } from 'antd';
+import { Button, Card, Col, Row, Space, Tag, Tooltip, Typography } from 'antd';
 import { BarsOutlined, TableOutlined } from '@ant-design/icons';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { searchAssets } from '@/api/catalog';
+import { useQuery } from '@tanstack/react-query';
+import { getSearchFacets, searchAssets } from '@/api/catalog';
+import type { SearchParams } from '@/api/catalog';
 import { qk } from '@/api/keys';
 import type { ColumnsType } from '@/components/DataTable';
 import DataTable from '@/components/DataTable';
@@ -22,6 +24,27 @@ import {
 const PAGE_SIZE = 50;
 /** 后端对模糊检索的结果上限（MOD-09 §4.1）。 */
 const SEARCH_MAX = 1000;
+
+const DIMENSION_LABELS: Record<string, string> = {
+  datasource: '数据源',
+  schema: 'Schema',
+  grade: '分级',
+  owner: '负责人',
+  tag: '标签',
+};
+
+/**
+ * 分面值 → 检索过滤条件。返回 ``null`` 表示该维度**当前无法用于过滤**
+ * （后端 `/search` 尚不支持按 schema 过滤），界面据此置灰而不是假装可点。
+ */
+function facetToFilter(dimension: string, value: string): Record<string, unknown> | null {
+  if (dimension === 'datasource') return { datasourceId: Number(value) };
+  if (dimension === 'owner') return { owner: value };
+  // 后端只有 gradeMin（>=N），没有精确分级过滤；标签上明示是「≥」。
+  if (dimension === 'grade') return { gradeMin: Number(value) };
+  if (dimension === 'tag') return { tags: [value] };
+  return null;
+}
 
 /**
  * 资产检索 / 浏览（FE-01 §4.1）。
@@ -51,6 +74,51 @@ export default function CatalogSearchPage() {
     [filters],
   );
   const filterKey = JSON.stringify(params);
+
+  /** FR-M3.4：过滤条件同步到 URL，便于分享与刷新后保持。 */
+  const syncUrl = (next: Record<string, unknown>) => {
+    const sp = new URLSearchParams();
+    if (next.term) sp.set('q', String(next.term));
+    if (next.type) sp.set('type', String(next.type));
+    if (next.datasourceId) sp.set('ds', String(next.datasourceId));
+    if (next.owner) sp.set('owner', String(next.owner));
+    if (next.gradeMin) sp.set('gradeMin', String(next.gradeMin));
+    setSearchParams(sp, { replace: true });
+  };
+
+  const applyFilters = (patch: Record<string, unknown>) => {
+    const next = { ...filters, ...patch };
+    setFilters(next as FilterValues);
+    syncUrl(next);
+  };
+
+  const facets = useQuery({
+    queryKey: ['catalog', 'search-facets', filterKey],
+    queryFn: () => getSearchFacets(params as SearchParams),
+  });
+
+  /** FR-M3.3：已选条件常驻为 chip，可逐个移除。 */
+  const chips: { key: string; label: string; patch: Record<string, unknown> }[] = [];
+  if (filters.datasourceId) {
+    chips.push({
+      key: 'ds',
+      label: `数据源 #${filters.datasourceId}`,
+      patch: { datasourceId: undefined },
+    });
+  }
+  if (filters.owner) {
+    chips.push({ key: 'owner', label: `负责人 ${filters.owner}`, patch: { owner: undefined } });
+  }
+  if (filters.gradeMin) {
+    chips.push({
+      key: 'grade',
+      label: `分级 ≥ L${filters.gradeMin}`,
+      patch: { gradeMin: undefined },
+    });
+  }
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    chips.push({ key: 'tags', label: `标签 ${filters.tags.join('/')}`, patch: { tags: undefined } });
+  }
 
   const columns: ColumnsType<CatalogAsset> = [
     {
@@ -189,13 +257,72 @@ export default function CatalogSearchPage() {
           },
         ]}
         values={filters}
-        onChange={(v) => {
-          setFilters(v);
-          if (v.term) setSearchParams({ q: String(v.term) });
-        }}
+        onChange={(v) => applyFilters(v as Record<string, unknown>)}
       />
-      <DataTable<CatalogAsset>
-        columns={columns}
+      {chips.length > 0 ? (
+        <div style={{ margin: '12px 0' }}>
+          <Space size={4} wrap>
+            {chips.map((chip) => (
+              <Tag key={chip.key} closable onClose={() => applyFilters(chip.patch)}>
+                {chip.label}
+              </Tag>
+            ))}
+          </Space>
+        </div>
+      ) : null}
+      <Row gutter={16}>
+        <Col xs={24} lg={6}>
+          <Card size="small" title="分面" loading={facets.isLoading}>
+            {(facets.data?.dimensions ?? []).map((dimension) => {
+              const buckets = facets.data?.facets?.[dimension] ?? [];
+              if (buckets.length === 0) return null;
+              return (
+                <div key={dimension} style={{ marginBottom: 12 }}>
+                  <Typography.Text strong>
+                    {DIMENSION_LABELS[dimension] ?? dimension}
+                  </Typography.Text>
+                  <div
+                    style={{
+                      marginTop: 6,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    {buckets.map((bucket) => {
+                      const patch = facetToFilter(dimension, bucket.value);
+                      const text = (
+                        <span>
+                          {dimension === 'grade'
+                            ? `L${bucket.label ?? bucket.value}`
+                            : (bucket.label ?? bucket.value)}
+                          <Typography.Text type="secondary"> ({bucket.count})</Typography.Text>
+                        </span>
+                      );
+                      if (!patch) {
+                        return (
+                          <Tooltip key={bucket.value} title="后端检索暂不支持按该维度过滤">
+                            <span style={{ color: '#8c8c8c', cursor: 'not-allowed' }}>
+                              {text}
+                            </span>
+                          </Tooltip>
+                        );
+                      }
+                      return (
+                        <a key={bucket.value} onClick={() => applyFilters(patch)}>
+                          {text}
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        </Col>
+        <Col xs={24} lg={18}>
+          <DataTable<CatalogAsset>
+          columns={columns}
         queryKey={qk.catalog.search(params)}
         filterKey={filterKey}
         // 检索响应不含 id；且同一 fqn 可能同时命中 table 与 column，
@@ -223,6 +350,8 @@ export default function CatalogSearchPage() {
       <Typography.Text type="secondary">
         模糊检索后端上限 {SEARCH_MAX} 条，超限时请收窄条件（MOD-09 §4.1）
       </Typography.Text>
+        </Col>
+      </Row>
     </div>
   );
 }

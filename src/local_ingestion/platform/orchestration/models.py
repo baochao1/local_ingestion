@@ -17,6 +17,11 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
+    #: Handler ran, but part of the work failed (FR-M9). Distinguishing this
+    #: from a total failure matters: a profile run over 200 tables where 3
+    #: errored still produced 197 usable results, and reporting "failed" hides
+    #: them.
+    PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
@@ -35,6 +40,7 @@ class JobType(str, Enum):
     CLASSIFY = "classify"
     LINEAGE = "lineage"
     PERMISSION = "permission"
+    QUALITY = "quality"
 
 
 def _norm(value: Any) -> str:

@@ -37,6 +37,31 @@ export function getCatalogOverview(trendDays = 30) {
   return get<CatalogOverview>('/catalog/overview', { trend_days: trendDays });
 }
 
+// ------------------------------------------------------------- 检索分面（FR-M3）
+
+export interface FacetBucket {
+  value: string;
+  count: number;
+  /** 仅 id 类维度（datasource/schema）回填的展示名。 */
+  label?: string;
+}
+
+export interface SearchFacets {
+  dimensions: string[];
+  facets: Record<string, FacetBucket[]>;
+}
+
+/**
+ * 分面计数（FR-M3.1）。与 `/search` 分开请求：两者成本模型不同，
+ * 分面慢不该拖慢结果列表（NFR-M2）。
+ */
+export function getSearchFacets(params: SearchParams, topN = 20) {
+  return get<SearchFacets>('/search/facets', {
+    ...cleanParams(params as Record<string, unknown>),
+    topN,
+  });
+}
+
 // ------------------------------------------------------- 层级浏览（MOD-09 §182-183）
 //
 // MOD-09 规定的浏览接口此前从未实现，HTTP 层只有 /search（限 1000 条模糊匹配），

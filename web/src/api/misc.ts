@@ -10,6 +10,32 @@ export function getLineageImpact(fqn: string, params: { depth?: number } = {}) {
   );
 }
 
+export interface LineageWalkNode {
+  fqn: string;
+  depth?: number;
+  entity_type?: string;
+}
+
+export interface LineageWalk {
+  fqn: string;
+  nodes: LineageWalkNode[];
+}
+
+/** MOD-07 血缘上下游（FR-M4.3）。后端返回 snake_case。 */
+export function getLineageUpstream(fqn: string, maxDepth = 1) {
+  return get<LineageWalk>(
+    `/lineage/tables/${encodeURIComponent(fqn)}/upstream`,
+    { max_depth: maxDepth } as Record<string, unknown>,
+  );
+}
+
+export function getLineageDownstream(fqn: string, maxDepth = 1) {
+  return get<LineageWalk>(
+    `/lineage/tables/${encodeURIComponent(fqn)}/downstream`,
+    { max_depth: maxDepth } as Record<string, unknown>,
+  );
+}
+
 export function listBusinessTerms() {
   return get<BusinessTerm[]>('/business/terms');
 }
